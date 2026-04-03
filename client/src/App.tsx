@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getContacts, logInteraction, addContact, deleteContact, getContactDetails, updateContact, login, logout, checkAuth } from './api';
-import { UserPlus, Trash2, Clock, CheckCircle, X, ChevronRight, Mail, Phone, MessageSquare, MapPin, Tag, Gift, Edit2, Lock, LogOut } from 'lucide-react';
+import { UserPlus, Trash2, Clock, CheckCircle, X, ChevronRight, Phone, MessageSquare, MapPin, Tag, Gift, Edit2, Lock, LogOut } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 
 interface Interaction {
@@ -15,7 +15,6 @@ interface Contact {
   id: number;
   first_name: string;
   last_name: string;
-  email: string;
   birthday: string | null;
   frequency_days: number;
   tags: string; 
@@ -38,7 +37,6 @@ const App: React.FC = () => {
   
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
   const [birthday, setBirthday] = useState('');
   const [newFreq, setNewFreq] = useState(30);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -109,7 +107,6 @@ const App: React.FC = () => {
   const resetForm = () => {
     setFirstName('');
     setLastName('');
-    setEmail('');
     setBirthday('');
     setNewFreq(30);
     setSelectedTags([]);
@@ -124,7 +121,6 @@ const App: React.FC = () => {
     const contactData = { 
       first_name: firstName, 
       last_name: lastName, 
-      email,
       birthday,
       frequency_days: newFreq, 
       tags: selectedTags,
@@ -147,7 +143,6 @@ const App: React.FC = () => {
     e.stopPropagation();
     setFirstName(contact.first_name);
     setLastName(contact.last_name || '');
-    setEmail(contact.email || '');
     setBirthday(contact.birthday || '');
     setNewFreq(contact.frequency_days);
     setSelectedTags(contact.tags ? contact.tags.split(',') : []);
@@ -296,10 +291,6 @@ const App: React.FC = () => {
                 <input type="text" placeholder="Last Name" className="w-full p-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none" value={lastName} onChange={(e) => setLastName(e.target.value)} />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700">Email</label>
-                <input type="email" placeholder="email@example.com" className="w-full p-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none" value={email} onChange={(e) => setEmail(e.target.value)} />
-              </div>
-              <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-700">Birthday</label>
                 <input type="date" className="w-full p-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none" value={birthday} onChange={(e) => setBirthday(e.target.value)} />
               </div>
@@ -390,12 +381,6 @@ const App: React.FC = () => {
                 ))}
               </div>
               <div className="mt-6 space-y-3">
-                {selectedContact.email && (
-                  <div className="flex items-center gap-2 text-sm text-slate-600">
-                    <Mail size={16} className="text-slate-400" />
-                    <span>{selectedContact.email}</span>
-                  </div>
-                )}
                 <div className="flex items-center gap-2 text-sm text-slate-600">
                   <Phone size={16} className="text-slate-400" />
                   <span>{selectedContact.preferred_contact_method}</span>

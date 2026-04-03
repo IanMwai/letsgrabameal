@@ -12,5 +12,5 @@ server/database.db-journal
 .git
 .DS_Store
 .vscode
-client/dist
+# client/dist (Removing this so it can be copied)
 server/dist

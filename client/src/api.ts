@@ -13,7 +13,6 @@ export const getContactDetails = (id: number) => api.get(`/contacts/${id}`);
 export const addContact = (contact: { 
   first_name: string; 
   last_name?: string; 
-  email?: string; 
   birthday?: string;
   frequency_days: number; 
   tags?: string[]; 
@@ -24,7 +23,6 @@ export const addContact = (contact: {
 export const updateContact = (id: number, contact: { 
   first_name: string; 
   last_name?: string; 
-  email?: string; 
   birthday?: string;
   frequency_days: number; 
   tags?: string[]; 

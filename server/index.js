@@ -7,14 +7,22 @@ require('dotenv').config();
 const { Resend } = require('resend');
 const cron = require('node-cron');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Check for required environment variables on startup
+if (!process.env.APP_PASSWORD || !process.env.COOKIE_SECRET) {
+  console.error('FATAL ERROR: APP_PASSWORD or COOKIE_SECRET environment variables are not set.');
+  process.exit(1);
+}
+
+const resend = new Resend(process.env.RESEND_API_KEY || 'dummy_key');
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Use a secret for signed cookies
-const COOKIE_SECRET = process.env.COOKIE_SECRET || 'meal-grabber-secret-123';
-const APP_PASSWORD = process.env.APP_PASSWORD || 'change-me-please';
+// Public health check for Fly.io (Safe: returns no data)
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
+const COOKIE_SECRET = process.env.COOKIE_SECRET;
+const APP_PASSWORD = process.env.APP_PASSWORD;
 
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? true : 'http://localhost:5173',
@@ -25,8 +33,8 @@ app.use(cookieParser(COOKIE_SECRET));
 
 // Auth Middleware
 const authMiddleware = (req, res, next) => {
-  // Allow login route and public assets
-  if (req.path === '/api/login' || req.path.startsWith('/assets/')) {
+  // Allow login route, health check, and public assets
+  if (req.path === '/api/login' || req.path === '/health' || req.path.startsWith('/assets/')) {
     return next();
   }
 
@@ -40,8 +48,7 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // For other requests (like the frontend), let it load the login page 
-  // (We'll handle the UI redirect in the React app later)
+  // Serve the frontend for all other requests
   next();
 };
 
@@ -83,14 +90,13 @@ app.get('/api/contacts', (req, res) => {
 });
 
 app.post('/api/contacts', (req, res) => {
-  const { first_name, last_name, email, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method } = req.body;
+  const { first_name, last_name, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method } = req.body;
   const info = db.prepare(`
-    INSERT INTO contacts (first_name, last_name, email, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO contacts (first_name, last_name, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method) 
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     first_name, 
     last_name || '', 
-    email || '', 
     birthday || null,
     frequency_days || 30, 
     Array.isArray(tags) ? tags.join(',') : (tags || ''), 
@@ -101,12 +107,11 @@ app.post('/api/contacts', (req, res) => {
 });
 
 app.put('/api/contacts/:id', (req, res) => {
-  const { first_name, last_name, email, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method } = req.body;
+  const { first_name, last_name, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method } = req.body;
   db.prepare(`
     UPDATE contacts SET 
       first_name = ?, 
       last_name = ?, 
-      email = ?, 
       birthday = ?, 
       frequency_days = ?, 
       tags = ?, 
@@ -116,7 +121,6 @@ app.put('/api/contacts/:id', (req, res) => {
   `).run(
     first_name, 
     last_name || '', 
-    email || '', 
     birthday || null,
     frequency_days || 30, 
     Array.isArray(tags) ? tags.join(',') : (tags || ''), 
@@ -183,7 +187,6 @@ async function getNotificationData() {
     WHERE strftime('%m-%d', birthday) = ?
   `).all(today);
 
-  // Get last interaction for each contact
   const enrichContact = (contact) => {
     const lastInteraction = db.prepare('SELECT * FROM interactions WHERE contact_id = ? ORDER BY date DESC LIMIT 1').get(contact.id);
     return { ...contact, lastInteraction };
@@ -262,14 +265,12 @@ app.get('/api/test-notify', async (req, res) => {
   res.send('Notification check triggered. Check server console.');
 });
 
+// Serve static files for hosting
 app.use(express.static(path.join(__dirname, '../client/dist')));
 app.use((req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running at http://0.0.0.0:${port}`);
 });
- {
-  console.log(`Server running at http://localhost:${port}`);
-};
