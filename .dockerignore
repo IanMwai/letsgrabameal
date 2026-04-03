@@ -1,0 +1,16 @@
+node_modules
+client/node_modules
+server/node_modules
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+server/database.db
+server/database.db-journal
+/data
+.git
+.DS_Store
+.vscode
+client/dist
+server/dist

@@ -1,0 +1,37 @@
+# Dependencies
+node_modules
+client/node_modules
+server/node_modules
+
+# Build outputs
+client/dist
+server/dist
+.next
+build
+
+# Environment variables (Crucial to ignore!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Database files (Keep your local data local)
+server/database.db
+server/database.db-journal
+/data
+*.sqlite
+*.sqlite3
+*.db
+
+# macOS specific
+.DS_Store
+
+# Editor directories and files
+.vscode
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
