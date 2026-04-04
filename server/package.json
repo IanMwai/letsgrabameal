@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "better-sqlite3": "^12.8.0",
     "body-parser": "^2.2.2",
     "cookie-parser": "^1.4.7",

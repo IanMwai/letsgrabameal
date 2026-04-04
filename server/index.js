@@ -5,6 +5,7 @@ const cookieParser = require('cookie-parser');
 const db = require('./database');
 require('dotenv').config();
 const { Resend } = require('resend');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const cron = require('node-cron');
 
 // Check for required environment variables on startup
@@ -14,6 +15,8 @@ if (!process.env.APP_PASSWORD || !process.env.COOKIE_SECRET) {
 }
 
 const resend = new Resend(process.env.RESEND_API_KEY || 'dummy_key');
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+const APP_TIMEZONE = process.env.TIMEZONE || 'America/New_York';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -23,6 +26,98 @@ app.get('/health', (req, res) => res.status(200).send('OK'));
 
 const COOKIE_SECRET = process.env.COOKIE_SECRET;
 const APP_PASSWORD = process.env.APP_PASSWORD;
+
+const zonedDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: APP_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function getFormatterParts(formatter, date) {
+  return formatter.formatToParts(date).reduce((parts, part) => {
+    if (part.type !== 'literal') {
+      parts[part.type] = part.value;
+    }
+    return parts;
+  }, {});
+}
+
+function parseStoredDate(value) {
+  if (!value) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Date(`${value}T00:00:00`);
+  }
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    return new Date(value.replace(' ', 'T') + 'Z');
+  }
+
+  return new Date(value);
+}
+
+function getZonedDateKey(value) {
+  const date = value instanceof Date ? value : parseStoredDate(value);
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const { year, month, day } = getFormatterParts(zonedDateFormatter, date);
+  return `${year}-${month}-${day}`;
+}
+
+function getTodayMonthDay() {
+  const todayKey = getZonedDateKey(new Date());
+  return todayKey ? todayKey.slice(5, 10) : null;
+}
+
+function getMonthDayFromBirthday(value) {
+  if (!value) return null;
+
+  const dateOnlyMatch = value.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (dateOnlyMatch) {
+    return `${dateOnlyMatch[1]}-${dateOnlyMatch[2]}`;
+  }
+
+  const zonedDateKey = getZonedDateKey(value);
+  return zonedDateKey ? zonedDateKey.slice(5, 10) : null;
+}
+
+function diffCalendarDays(currentDateKey, previousDateKey) {
+  if (!currentDateKey || !previousDateKey) return 0;
+
+  const currentUtc = new Date(`${currentDateKey}T00:00:00Z`);
+  const previousUtc = new Date(`${previousDateKey}T00:00:00Z`);
+
+  return Math.max(0, Math.floor((currentUtc - previousUtc) / (1000 * 60 * 60 * 24)));
+}
+
+function getContactsWithDaysSince() {
+  const todayKey = getZonedDateKey(new Date());
+  const contacts = db.prepare('SELECT * FROM contacts').all();
+
+  return contacts
+    .map((contact) => {
+      const referenceDateKey = getZonedDateKey(contact.last_contact_date || contact.created_at);
+
+      return {
+        ...contact,
+        days_since_contact: diffCalendarDays(todayKey, referenceDateKey),
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.frequency_days - a.days_since_contact - (b.frequency_days - b.days_since_contact)
+    );
+}
+
+function getContactsWithBirthdaysToday(contacts) {
+  const todayMonthDay = getTodayMonthDay();
+
+  return contacts.filter((contact) => getMonthDayFromBirthday(contact.birthday) === todayMonthDay);
+}
 
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? true : 'http://localhost:5173',
@@ -80,12 +175,7 @@ app.get('/api/auth-check', (req, res) => {
 
 // Contacts Endpoints
 app.get('/api/contacts', (req, res) => {
-  const contacts = db.prepare(`
-    SELECT *, 
-    (julianday('now') - julianday(COALESCE(last_contact_date, created_at))) as days_since_contact 
-    FROM contacts 
-    ORDER BY (frequency_days - (julianday('now') - julianday(COALESCE(last_contact_date, created_at)))) ASC
-  `).all();
+  const contacts = getContactsWithDaysSince();
   res.json(contacts);
 });
 
@@ -132,18 +222,9 @@ app.put('/api/contacts/:id', (req, res) => {
 });
 
 app.get('/api/notify-check', (req, res) => {
-  const overdue = db.prepare(`
-    SELECT *, 
-    (julianday('now') - julianday(COALESCE(last_contact_date, created_at))) as days_since_contact 
-    FROM contacts 
-    WHERE (julianday('now') - julianday(COALESCE(last_contact_date, created_at))) >= frequency_days
-  `).all();
-  
-  const today = new Date().toISOString().slice(5, 10); // MM-DD
-  const birthdays = db.prepare(`
-    SELECT * FROM contacts 
-    WHERE strftime('%m-%d', birthday) = ?
-  `).all(today);
+  const contacts = getContactsWithDaysSince();
+  const overdue = contacts.filter((contact) => contact.days_since_contact >= contact.frequency_days);
+  const birthdays = getContactsWithBirthdaysToday(contacts);
 
   res.json({ overdue, birthdays });
 });
@@ -174,18 +255,9 @@ app.post('/api/interactions', (req, res) => {
 
 // Notification Logic
 async function getNotificationData() {
-  const overdue = db.prepare(`
-    SELECT *, 
-    (julianday('now') - julianday(COALESCE(last_contact_date, created_at))) as days_since_contact 
-    FROM contacts 
-    WHERE (julianday('now') - julianday(COALESCE(last_contact_date, created_at))) >= frequency_days
-  `).all();
-  
-  const today = new Date().toISOString().slice(5, 10); // MM-DD
-  const birthdays = db.prepare(`
-    SELECT * FROM contacts 
-    WHERE strftime('%m-%d', birthday) = ?
-  `).all(today);
+  const contacts = getContactsWithDaysSince();
+  const overdue = contacts.filter((contact) => contact.days_since_contact >= contact.frequency_days);
+  const birthdays = getContactsWithBirthdaysToday(contacts);
 
   const enrichContact = (contact) => {
     const lastInteraction = db.prepare('SELECT * FROM interactions WHERE contact_id = ? ORDER BY date DESC LIMIT 1').get(contact.id);
@@ -198,27 +270,62 @@ async function getNotificationData() {
   };
 }
 
+async function generateAISummary(overdue, birthdays) {
+  if (!genAI) return null;
+  
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = `You are a helpful personal assistant for "Meal Grabber", an app that helps Ian stay in touch with friends.
+    Based on the following data for today, write a short, friendly, and conversational summary (2-3 sentences max).
+    If there's nothing to do, be encouraging. If there are people to reach out to, mention one or two specifically.
+    
+    Data:
+    - Overdue contacts: ${overdue.map(c => `${c.first_name} ${c.last_name} (last met ${Math.floor(c.days_since_contact)} days ago, notes: ${c.lastInteraction?.notes || 'none'})`).join(', ')}
+    - Birthdays today: ${birthdays.map(c => `${c.first_name} ${c.last_name}`).join(', ')}
+    
+    Address the email to Ian.`;
+
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (err) {
+    console.error('CRON: Gemini AI error:', err);
+    return null;
+  }
+}
+
 async function sendNotificationEmails() {
-  if (!process.env.RESEND_API_KEY || process.env.RESEND_API_KEY === 'your_resend_api_key_here') {
-    console.log('Skipping email notification: No API key found.');
+  const apiKey = process.env.RESEND_API_KEY;
+  const notificationEmail = process.env.NOTIFICATION_EMAIL;
+
+  if (!apiKey || apiKey === 'your_resend_api_key_here') {
+    console.warn('CRON: Skipping email notification: RESEND_API_KEY is not configured.');
+    return;
+  }
+
+  if (!notificationEmail || notificationEmail === 'your_email@example.com') {
+    console.warn('CRON: Skipping email notification: NOTIFICATION_EMAIL is not configured or using default.');
     return;
   }
 
   const { overdue, birthdays } = await getNotificationData();
+  const aiSummary = await generateAISummary(overdue, birthdays);
 
-  if (overdue.length === 0 && birthdays.length === 0) {
-    console.log('No notifications to send today.');
-    return;
+  console.log(`CRON: Found ${overdue.length} overdue contacts and ${birthdays.length} birthdays. Sending daily summary.`);
+
+  let html = '<h2>Meal Grabber Daily Digest</h2>';
+  
+  if (aiSummary) {
+    html += `<div style="background: #f4f4f4; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+      <p style="font-style: italic; margin: 0;">${aiSummary.replace(/\n/g, '<br>')}</p>
+    </div>`;
   }
-
-  let html = '<h2>Meal Grabber Reminders</h2>';
 
   if (birthdays.length > 0) {
     html += '<h3>🎂 Birthdays Today</h3><ul>';
     birthdays.forEach(c => {
       html += `<li><strong>${c.first_name} ${c.last_name}</strong>`;
       if (c.lastInteraction) {
-        html += `<br/><em>Last convo: ${c.lastInteraction.notes} (${c.lastInteraction.date})</em>`;
+        html += `<br/><em>Last interaction (${c.lastInteraction.date}): ${c.lastInteraction.notes}</em>`;
       }
       html += '</li>';
     });
@@ -228,36 +335,45 @@ async function sendNotificationEmails() {
   if (overdue.length > 0) {
     html += '<h3>⏳ Overdue for a Meal</h3><ul>';
     overdue.forEach(c => {
-      html += `<li><strong>${c.first_name} ${c.last_name}</strong> (Due every ${c.frequency_days} days, last met ${Math.floor(c.days_since_contact)} days ago)`;
+      html += `<li><strong>${c.first_name} ${c.last_name}</strong><br/>`;
+      html += `<em>Target: Every ${c.frequency_days} days. It's been ${Math.floor(c.days_since_contact)} days.</em><br/>`;
       if (c.lastInteraction) {
-        html += `<br/><em>Last convo: ${c.lastInteraction.notes} (${c.lastInteraction.date})</em>`;
+        html += `<em>Last convo: "${c.lastInteraction.notes}" on ${c.lastInteraction.date}</em>`;
+      } else {
+        html += `<em>No previous interactions recorded.</em>`;
       }
-      html += '</li>';
+      html += '</li><br/>';
     });
     html += '</ul>';
+  }
+
+  if (overdue.length === 0 && birthdays.length === 0) {
+    html += '<p>You\'re all caught up! No one is overdue for a meal and there are no birthdays today. Enjoy your day!</p>';
   }
 
   try {
     const { data, error } = await resend.emails.send({
       from: 'Meal Grabber <onboarding@resend.dev>',
-      to: [process.env.NOTIFICATION_EMAIL || 'your_email@example.com'],
+      to: [notificationEmail],
       subject: `Meal Grabber: ${overdue.length + birthdays.length} Reminders for Today`,
       html: html,
     });
 
     if (error) {
-      return console.error({ error });
+      return console.error('CRON: Resend error:', error);
     }
 
-    console.log({ data });
+    console.log('CRON: Email sent successfully:', data.id);
   } catch (err) {
-    console.error('Error sending email:', err);
+    console.error('CRON: Error sending email:', err);
   }
 }
 
 cron.schedule('0 9 * * *', () => {
-  console.log('Running daily notification check...');
+  console.log('CRON: Running daily notification check...');
   sendNotificationEmails();
+}, {
+  timezone: APP_TIMEZONE
 });
 
 app.get('/api/test-notify', async (req, res) => {

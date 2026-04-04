@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { getContacts, logInteraction, addContact, deleteContact, getContactDetails, updateContact, login, logout, checkAuth } from './api';
-import { UserPlus, Trash2, Clock, CheckCircle, X, ChevronRight, Phone, MessageSquare, MapPin, Tag, Gift, Edit2, Lock, LogOut } from 'lucide-react';
-import { formatDistanceToNow, format } from 'date-fns';
 
 interface Interaction {
   id: number;
@@ -24,6 +22,199 @@ interface Contact {
   days_since_contact: number;
   interactions?: Interaction[];
 }
+
+type IconProps = {
+  size?: number;
+  className?: string;
+};
+
+const SvgIcon: React.FC<React.PropsWithChildren<IconProps>> = ({
+  size = 24,
+  className,
+  children,
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    {children}
+  </svg>
+);
+
+const UserPlus: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+    <circle cx="9.5" cy="7" r="4" />
+    <path d="M19 8v6" />
+    <path d="M16 11h6" />
+  </SvgIcon>
+);
+
+const Trash2: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M3 6h18" />
+    <path d="M8 6V4h8v2" />
+    <path d="M19 6l-1 14H6L5 6" />
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+  </SvgIcon>
+);
+
+const Clock: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 3" />
+  </SvgIcon>
+);
+
+const CheckCircle: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m9 12 2 2 4-4" />
+  </SvgIcon>
+);
+
+const X: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M18 6 6 18" />
+    <path d="m6 6 12 12" />
+  </SvgIcon>
+);
+
+const ChevronRight: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="m9 18 6-6-6-6" />
+  </SvgIcon>
+);
+
+const Phone: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7l.5 3a2 2 0 0 1-.6 1.8l-1.3 1.3a16 16 0 0 0 6.4 6.4l1.3-1.3a2 2 0 0 1 1.8-.6l3 .5a2 2 0 0 1 1.7 2Z" />
+  </SvgIcon>
+);
+
+const MessageSquare: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M21 15a3 3 0 0 1-3 3H8l-5 4V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3Z" />
+  </SvgIcon>
+);
+
+const MapPin: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M12 21s7-4.4 7-11a7 7 0 1 0-14 0c0 6.6 7 11 7 11Z" />
+    <circle cx="12" cy="10" r="2.5" />
+  </SvgIcon>
+);
+
+const Tag: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M20 12 12 20l-9-9V4h7Z" />
+    <circle cx="7.5" cy="7.5" r="1" fill="currentColor" stroke="none" />
+  </SvgIcon>
+);
+
+const Gift: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M20 12v8H4v-8" />
+    <path d="M2 7h20v5H2z" />
+    <path d="M12 7v13" />
+    <path d="M12 7H7.5A2.5 2.5 0 1 1 10 4.5L12 7Z" />
+    <path d="M12 7h4.5A2.5 2.5 0 1 0 14 4.5L12 7Z" />
+  </SvgIcon>
+);
+
+const Edit2: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M12 20h9" />
+    <path d="m16.5 3.5 4 4L8 20l-5 1 1-5Z" />
+  </SvgIcon>
+);
+
+const Lock: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <rect x="5" y="11" width="14" height="10" rx="2" />
+    <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+  </SvgIcon>
+);
+
+const LogOut: React.FC<IconProps> = (props) => (
+  <SvgIcon {...props}>
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <path d="m16 17 5-5-5-5" />
+    <path d="M21 12H9" />
+  </SvgIcon>
+);
+
+const shortDateFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+});
+
+const fullDateFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
+
+const parseAppDate = (value: string) => {
+  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  return new Date(value);
+};
+
+const formatShortDate = (value: string) => shortDateFormatter.format(parseAppDate(value));
+
+const formatFullDate = (value: string) => fullDateFormatter.format(parseAppDate(value));
+
+const formatRelativeTime = (value: string) => {
+  const diffMs = Date.now() - parseAppDate(value).getTime();
+  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+
+  if (diffMinutes < 1) return 'less than a minute';
+  if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'}`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'}`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays} day${diffDays === 1 ? '' : 's'}`;
+
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `${diffMonths} month${diffMonths === 1 ? '' : 's'}`;
+
+  const diffYears = Math.floor(diffDays / 365);
+  return `${diffYears} year${diffYears === 1 ? '' : 's'}`;
+};
+
+const getLocalMonthDay = (value: string) => {
+  const dateOnlyMatch = value.match(/^\d{4}-(\d{2})-(\d{2})$/);
+
+  if (dateOnlyMatch) {
+    return `${dateOnlyMatch[1]}-${dateOnlyMatch[2]}`;
+  }
+
+  const parsedDate = parseAppDate(value);
+  return `${String(parsedDate.getMonth() + 1).padStart(2, '0')}-${String(parsedDate.getDate()).padStart(2, '0')}`;
+};
+
+const getTodayLocalMonthDay = () => {
+  const now = new Date();
+  return `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -61,8 +252,8 @@ const App: React.FC = () => {
       const overdue = res.data.filter((c: Contact) => (c.days_since_contact || 0) >= c.frequency_days);
       setOverdueCount(overdue.length);
 
-      const today = new Date().toISOString().slice(5, 10);
-      const bdays = res.data.filter((c: Contact) => c.birthday && c.birthday.slice(5, 10) === today);
+      const today = getTodayLocalMonthDay();
+      const bdays = res.data.filter((c: Contact) => c.birthday && getLocalMonthDay(c.birthday) === today);
       setBirthdayContacts(bdays);
     } catch (err) {
       setIsAuthenticated(false);
@@ -339,10 +530,10 @@ const App: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
                   <div className="flex items-center gap-2 text-slate-500 text-sm"><Clock size={16} className="text-slate-400" /><span>Every {contact.frequency_days} days</span></div>
-                  <div className="flex items-center gap-2 text-slate-500 text-sm"><CheckCircle size={16} className="text-slate-400" /><span>{contact.last_contact_date ? `${formatDistanceToNow(new Date(contact.last_contact_date))} ago` : 'Never contacted'}</span></div>
+                  <div className="flex items-center gap-2 text-slate-500 text-sm"><CheckCircle size={16} className="text-slate-400" /><span>{contact.last_contact_date ? `${formatRelativeTime(contact.last_contact_date)} ago` : 'Never contacted'}</span></div>
                   <div className="flex items-center gap-2 text-slate-500 text-sm"><MessageSquare size={16} className="text-slate-400" /><span>Via: {contact.preferred_contact_method}</span></div>
                   <div className="flex items-center gap-2 text-slate-500 text-sm"><MapPin size={16} className="text-slate-400" /><span>Meet: {contact.preferred_meeting_method}</span></div>
-                  <div className="flex items-center gap-2 text-slate-500 text-sm"><Gift size={16} className="text-slate-400" /><span>{contact.birthday ? format(new Date(contact.birthday), 'MMM d') : 'No birthday'}</span></div>
+                  <div className="flex items-center gap-2 text-slate-500 text-sm"><Gift size={16} className="text-slate-400" /><span>{contact.birthday ? formatShortDate(contact.birthday) : 'No birthday'}</span></div>
                 </div>
               </div>
               <div className="flex items-center gap-3 w-full md:w-auto">
@@ -407,7 +598,7 @@ const App: React.FC = () => {
                   <div key={interaction.id} className="p-4 border border-slate-50 rounded-2xl bg-white shadow-sm">
                     <div className="flex justify-between items-center mb-3">
                       <span className="text-[11px] font-black uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{interaction.type}</span>
-                      <span className="text-[11px] font-bold text-slate-400">{format(new Date(interaction.date), 'MMM d, yyyy')}</span>
+                      <span className="text-[11px] font-bold text-slate-400">{formatFullDate(interaction.date)}</span>
                     </div>
                     {interaction.notes && <p className="text-sm text-slate-600 leading-relaxed">{interaction.notes}</p>}
                   </div>

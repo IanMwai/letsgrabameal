@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
 body {
-  @apply bg-slate-50 text-slate-900;
+  background-color: rgb(248 250 252);
+  color: rgb(15 23 42);
 }
