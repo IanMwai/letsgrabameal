@@ -25,6 +25,8 @@ cp .env.example .env
 ```
 Fill in the variables in `server/.env`:
 - `RESEND_API_KEY`: Your API key from Resend (for emails).
+- `GEMINI_API_KEY`: Your Google Gemini API key for the AI summary in the daily digest.
+- `GEMINI_MODEL`: Optional. Defaults to `gemini-2.5-flash`.
 - `APP_PASSWORD`: The password you will use to log into the web dashboard.
 - `COOKIE_SECRET`: A random string used to sign auth cookies.
 - `NOTIFICATION_EMAIL`: The email address where daily reminders will be sent.

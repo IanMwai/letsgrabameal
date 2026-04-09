@@ -16,6 +16,7 @@ if (!process.env.APP_PASSWORD || !process.env.COOKIE_SECRET) {
 
 const resend = new Resend(process.env.RESEND_API_KEY || 'dummy_key');
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const APP_TIMEZONE = process.env.TIMEZONE || 'America/New_York';
 
 const app = express();
@@ -26,6 +27,10 @@ app.get('/health', (req, res) => res.status(200).send('OK'));
 
 const COOKIE_SECRET = process.env.COOKIE_SECRET;
 const APP_PASSWORD = process.env.APP_PASSWORD;
+
+if (!process.env.GEMINI_API_KEY) {
+  console.warn('Startup warning: GEMINI_API_KEY is not configured. Daily digest emails will be sent without an AI summary.');
+}
 
 const zonedDateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: APP_TIMEZONE,
@@ -117,6 +122,237 @@ function getContactsWithBirthdaysToday(contacts) {
   const todayMonthDay = getTodayMonthDay();
 
   return contacts.filter((contact) => getMonthDayFromBirthday(contact.birthday) === todayMonthDay);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatContactName(contact) {
+  return [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim();
+}
+
+function formatInteractionDate(value) {
+  const parsed = parseStoredDate(value);
+  if (!parsed || Number.isNaN(parsed.getTime())) return null;
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(parsed);
+}
+
+function formatDigestDate() {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  }).format(new Date());
+}
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function buildFallbackSummary(overdue, birthdays) {
+  if (overdue.length === 0 && birthdays.length === 0) {
+    return "You’re all caught up today. No overdue catch-ups and no birthdays on deck, so you can relax until the next check-in.";
+  }
+
+  const parts = [];
+
+  if (birthdays.length > 0) {
+    const birthdayNames = birthdays.slice(0, 2).map((contact) => contact.first_name).join(' and ');
+    parts.push(
+      birthdays.length === 1
+        ? `${birthdayNames} has a birthday today`
+        : `${birthdayNames}${birthdays.length > 2 ? ' and others have' : ' have'} birthdays today`
+    );
+  }
+
+  if (overdue.length > 0) {
+    const overdueNames = overdue.slice(0, 2).map((contact) => contact.first_name).join(' and ');
+    parts.push(
+      overdue.length === 1
+        ? `${overdueNames} is ready for a catch-up`
+        : `${overdueNames}${overdue.length > 2 ? ' and others are' : ' are'} due for a meal`
+    );
+  }
+
+  return `${parts.join(', and ')}. A small nudge today could keep the momentum going.`;
+}
+
+function normalizeIntroSummary(summaryText) {
+  if (!summaryText) return null;
+
+  return summaryText
+    .trim()
+    .replace(/^hi ian[,!.\s-]*/i, '')
+    .replace(/^here'?s your relationship pulse for (today|[a-z]+,\s+[a-z]+\s+\d{1,2})[,!.\s-]*/i, '')
+    .trim();
+}
+
+function buildInfoPill(label, value) {
+  return `
+    <span style="display:inline-block; padding:6px 10px; margin:0 8px 8px 0; border-radius:999px; background:#273449; border:1px solid #334155; color:#cbd5e1; font-size:12px; line-height:16px;">
+      <strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}
+    </span>
+  `;
+}
+
+function buildContactCard(contact, options = {}) {
+  const {
+    accentColor = '#D97706',
+    eyebrow = '',
+    detailLine = '',
+  } = options;
+
+  const interactionDate = contact.lastInteraction?.date ? formatInteractionDate(contact.lastInteraction.date) : null;
+  const interactionNotes = contact.lastInteraction?.notes ? escapeHtml(contact.lastInteraction.notes) : null;
+  const preferencePills = [
+    contact.preferred_contact_method ? buildInfoPill('Reach out via', contact.preferred_contact_method) : '',
+    contact.preferred_meeting_method ? buildInfoPill('Best plan', contact.preferred_meeting_method) : '',
+    contact.tags ? buildInfoPill('Tags', contact.tags) : '',
+  ].join('');
+
+  return `
+    <tr>
+      <td style="padding:0 0 14px 0;">
+        <div style="border:1px solid #334155; border-radius:18px; background:#162033; padding:18px 18px 16px 18px; box-shadow:0 10px 24px rgba(2, 6, 23, 0.18);">
+          ${eyebrow ? `<div style="font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:${accentColor}; margin-bottom:8px;">${escapeHtml(eyebrow)}</div>` : ''}
+          <div style="font-size:22px; line-height:28px; font-weight:700; color:#f8fafc; margin-bottom:8px;">${escapeHtml(formatContactName(contact))}</div>
+          ${detailLine ? `<div style="font-size:15px; line-height:22px; color:#cbd5e1; margin-bottom:12px;">${detailLine}</div>` : ''}
+          ${preferencePills ? `<div style="margin-bottom:${interactionNotes || interactionDate ? '12px' : '0'};">${preferencePills}</div>` : ''}
+          ${
+            interactionNotes || interactionDate
+              ? `<div style="padding:14px; border-radius:14px; background:#0f172a; border:1px solid #334155; color:#cbd5e1;">
+                  <div style="font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#94a3b8; font-weight:700; margin-bottom:6px;">Last interaction${interactionDate ? ` • ${escapeHtml(interactionDate)}` : ''}</div>
+                  <div style="font-size:15px; line-height:22px; font-style:italic; color:#e2e8f0;">${interactionNotes || 'No notes saved for the latest interaction.'}</div>
+                </div>`
+              : `<div style="padding:14px; border-radius:14px; background:#0f172a; border:1px solid #334155; color:#94a3b8; font-size:14px; line-height:20px;">No previous interactions recorded yet.</div>`
+          }
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function buildDigestEmail({ overdue, birthdays, summaryText }) {
+  const totalReminders = overdue.length + birthdays.length;
+  const introSummary = normalizeIntroSummary(summaryText) || buildFallbackSummary(overdue, birthdays);
+  const summaryCards = [
+    { label: 'Total reminders', value: totalReminders, tone: '#c4b5fd', bg: '#312e81' },
+    { label: 'Birthdays', value: birthdays.length, tone: '#f9a8d4', bg: '#4a1d3b' },
+    { label: 'Meals to plan', value: overdue.length, tone: '#fcd34d', bg: '#4a3114' },
+  ];
+
+  const birthdayCards = birthdays.map((contact) =>
+    buildContactCard(contact, {
+      accentColor: '#DB2777',
+      eyebrow: 'Birthday today',
+      detailLine: 'A quick text, call, or plan could go a long way today.',
+    })
+  ).join('');
+
+  const overdueCards = overdue.map((contact) =>
+    buildContactCard(contact, {
+      accentColor: '#D97706',
+      eyebrow: contact.days_since_contact > contact.frequency_days ? 'Past due' : 'Due today',
+      detailLine: `Target cadence: every ${escapeHtml(contact.frequency_days)} days. It has been ${escapeHtml(Math.floor(contact.days_since_contact))} day${Math.floor(contact.days_since_contact) === 1 ? '' : 's'} since your last logged interaction.`,
+    })
+  ).join('');
+
+  const emptyState = overdue.length === 0 && birthdays.length === 0
+    ? `
+      <tr>
+        <td style="padding-top:8px;">
+          <div style="border-radius:20px; background:#162033; border:1px solid #334155; padding:22px; box-shadow:0 10px 24px rgba(2, 6, 23, 0.18);">
+            <div style="font-size:20px; line-height:28px; font-weight:700; color:#f8fafc; margin-bottom:8px;">A quiet day is a good sign.</div>
+            <div style="font-size:15px; line-height:24px; color:#cbd5e1;">
+              No birthdays and no overdue meals today. You’ve got space to be intentional instead of reactive.
+            </div>
+          </div>
+        </td>
+      </tr>
+    `
+    : '';
+
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+      <body style="margin:0; padding:0; background:#0f172a; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#f8fafc;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f172a; padding:24px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px; background:#1e293b; border:1px solid #334155; border-radius:28px; overflow:hidden; box-shadow:0 20px 50px rgba(2, 6, 23, 0.32);">
+                <tr>
+                  <td style="padding:32px 32px 24px 32px; background:linear-gradient(135deg, #1f2937 0%, #172033 50%, #111827 100%); border-bottom:1px solid #334155;">
+                    <div style="font-size:13px; line-height:18px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#94a3b8; margin-bottom:12px;">Meal Grabber Daily Digest</div>
+                    <div style="font-size:34px; line-height:40px; font-weight:800; color:#f8fafc; margin-bottom:10px;">Hi Ian, here’s your relationship pulse for ${escapeHtml(formatDigestDate())}.</div>
+                    <div style="font-size:16px; line-height:26px; color:#cbd5e1; max-width:560px;">${escapeHtml(introSummary)}</div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:24px 24px 8px 24px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                      <tr>
+                        ${summaryCards.map((card) => `
+                          <td style="padding:0 8px 16px 8px; width:33.33%;">
+                            <div style="background:${card.bg}; border:1px solid rgba(255,255,255,0.06); border-radius:20px; padding:18px 16px; text-align:left;">
+                              <div style="font-size:13px; line-height:18px; color:${card.tone}; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px;">${escapeHtml(card.label)}</div>
+                              <div style="font-size:32px; line-height:36px; color:#f8fafc; font-weight:800;">${escapeHtml(card.value)}</div>
+                            </div>
+                          </td>
+                        `).join('')}
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                ${
+                  birthdays.length > 0
+                    ? `<tr>
+                        <td style="padding:8px 32px 8px 32px;">
+                          <div style="font-size:24px; line-height:30px; font-weight:800; color:#f8fafc; margin-bottom:6px;">Birthdays today</div>
+                          <div style="font-size:15px; line-height:24px; color:#cbd5e1; margin-bottom:16px;">${pluralize(birthdays.length, 'person')} worth celebrating today.</div>
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${birthdayCards}</table>
+                        </td>
+                      </tr>`
+                    : ''
+                }
+                ${
+                  overdue.length > 0
+                    ? `<tr>
+                        <td style="padding:8px 32px 8px 32px;">
+                          <div style="font-size:24px; line-height:30px; font-weight:800; color:#f8fafc; margin-bottom:6px;">Catch-ups to plan</div>
+                          <div style="font-size:15px; line-height:24px; color:#cbd5e1; margin-bottom:16px;">${pluralize(overdue.length, 'meal')} could use a little momentum.</div>
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${overdueCards}</table>
+                        </td>
+                      </tr>`
+                    : ''
+                }
+                ${emptyState}
+                <tr>
+                  <td style="padding:16px 32px 32px 32px;">
+                    <div style="padding-top:18px; border-top:1px solid #334155; font-size:13px; line-height:22px; color:#94a3b8;">
+                      Meal Grabber is meant to make staying in touch feel lighter, not heavier. Small consistency beats perfect planning.
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
 }
 
 app.use(cors({
@@ -271,25 +507,38 @@ async function getNotificationData() {
 }
 
 async function generateAISummary(overdue, birthdays) {
-  if (!genAI) return null;
+  if (!genAI) {
+    return {
+      text: null,
+      error: 'GEMINI_API_KEY is not configured.',
+    };
+  }
   
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     const prompt = `You are a helpful personal assistant for "Meal Grabber", an app that helps Ian stay in touch with friends.
-    Based on the following data for today, write a short, friendly, and conversational summary (2-3 sentences max).
-    If there's nothing to do, be encouraging. If there are people to reach out to, mention one or two specifically.
+    Based on the following data for today, write a short, warm, emotionally intelligent summary for an email intro (2-3 sentences max).
+    Make it feel personal and encouraging, not robotic. If there are people to reach out to, mention one or two specifically.
+    Avoid bullet points, avoid greetings/sign-offs, and avoid repeating raw dates or exact timestamps.
+    Do not start with "Hi Ian" and do not repeat the heading "here’s your relationship pulse".
     
     Data:
     - Overdue contacts: ${overdue.map(c => `${c.first_name} ${c.last_name} (last met ${Math.floor(c.days_since_contact)} days ago, notes: ${c.lastInteraction?.notes || 'none'})`).join(', ')}
     - Birthdays today: ${birthdays.map(c => `${c.first_name} ${c.last_name}`).join(', ')}
     
-    Address the email to Ian.`;
+    The summary will appear under the heading "Hi Ian, here’s your relationship pulse for today."`;
 
     const result = await model.generateContent(prompt);
-    return result.response.text();
+    return {
+      text: result.response.text(),
+      error: null,
+    };
   } catch (err) {
     console.error('CRON: Gemini AI error:', err);
-    return null;
+    return {
+      text: null,
+      error: err?.message || 'Unknown Gemini error.',
+    };
   }
 }
 
@@ -308,48 +557,19 @@ async function sendNotificationEmails() {
   }
 
   const { overdue, birthdays } = await getNotificationData();
-  const aiSummary = await generateAISummary(overdue, birthdays);
+  const aiSummaryResult = await generateAISummary(overdue, birthdays);
+  const aiSummary = aiSummaryResult.text;
 
   console.log(`CRON: Found ${overdue.length} overdue contacts and ${birthdays.length} birthdays. Sending daily summary.`);
-
-  let html = '<h2>Meal Grabber Daily Digest</h2>';
-  
-  if (aiSummary) {
-    html += `<div style="background: #f4f4f4; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-      <p style="font-style: italic; margin: 0;">${aiSummary.replace(/\n/g, '<br>')}</p>
-    </div>`;
+  if (aiSummaryResult.error) {
+    console.warn(`CRON: AI summary unavailable: ${aiSummaryResult.error}`);
   }
 
-  if (birthdays.length > 0) {
-    html += '<h3>🎂 Birthdays Today</h3><ul>';
-    birthdays.forEach(c => {
-      html += `<li><strong>${c.first_name} ${c.last_name}</strong>`;
-      if (c.lastInteraction) {
-        html += `<br/><em>Last interaction (${c.lastInteraction.date}): ${c.lastInteraction.notes}</em>`;
-      }
-      html += '</li>';
-    });
-    html += '</ul>';
-  }
-
-  if (overdue.length > 0) {
-    html += '<h3>⏳ Overdue for a Meal</h3><ul>';
-    overdue.forEach(c => {
-      html += `<li><strong>${c.first_name} ${c.last_name}</strong><br/>`;
-      html += `<em>Target: Every ${c.frequency_days} days. It's been ${Math.floor(c.days_since_contact)} days.</em><br/>`;
-      if (c.lastInteraction) {
-        html += `<em>Last convo: "${c.lastInteraction.notes}" on ${c.lastInteraction.date}</em>`;
-      } else {
-        html += `<em>No previous interactions recorded.</em>`;
-      }
-      html += '</li><br/>';
-    });
-    html += '</ul>';
-  }
-
-  if (overdue.length === 0 && birthdays.length === 0) {
-    html += '<p>You\'re all caught up! No one is overdue for a meal and there are no birthdays today. Enjoy your day!</p>';
-  }
+  const html = buildDigestEmail({
+    overdue,
+    birthdays,
+    summaryText: aiSummary,
+  });
 
   try {
     const { data, error } = await resend.emails.send({
@@ -360,12 +580,36 @@ async function sendNotificationEmails() {
     });
 
     if (error) {
-      return console.error('CRON: Resend error:', error);
+      console.error('CRON: Resend error:', error);
+      return {
+        sent: false,
+        resendError: error,
+        aiSummaryIncluded: Boolean(aiSummary),
+        aiSummaryError: aiSummaryResult.error,
+        overdueCount: overdue.length,
+        birthdayCount: birthdays.length,
+      };
     }
 
     console.log('CRON: Email sent successfully:', data.id);
+    return {
+      sent: true,
+      emailId: data.id,
+      aiSummaryIncluded: Boolean(aiSummary),
+      aiSummaryError: aiSummaryResult.error,
+      overdueCount: overdue.length,
+      birthdayCount: birthdays.length,
+    };
   } catch (err) {
     console.error('CRON: Error sending email:', err);
+    return {
+      sent: false,
+      sendError: err?.message || 'Unknown email send error.',
+      aiSummaryIncluded: Boolean(aiSummary),
+      aiSummaryError: aiSummaryResult.error,
+      overdueCount: overdue.length,
+      birthdayCount: birthdays.length,
+    };
   }
 }
 
@@ -377,8 +621,12 @@ cron.schedule('0 9 * * *', () => {
 });
 
 app.get('/api/test-notify', async (req, res) => {
-  await sendNotificationEmails();
-  res.send('Notification check triggered. Check server console.');
+  const result = await sendNotificationEmails();
+  res.json({
+    message: 'Notification check triggered.',
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    ...result,
+  });
 });
 
 // Serve static files for hosting
