@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const cookieParser = require('cookie-parser');
 const db = require('./database');
-require('dotenv').config();
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const { Resend } = require('resend');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const cron = require('node-cron');
@@ -18,6 +18,7 @@ const resend = new Resend(process.env.RESEND_API_KEY || 'dummy_key');
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const APP_TIMEZONE = process.env.TIMEZONE || 'America/New_York';
+const APP_URL = process.env.APP_URL || 'https://letsgrabameal.fly.dev';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -137,18 +138,6 @@ function formatContactName(contact) {
   return [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim();
 }
 
-function formatInteractionDate(value) {
-  const parsed = parseStoredDate(value);
-  if (!parsed || Number.isNaN(parsed.getTime())) return null;
-
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: APP_TIMEZONE,
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(parsed);
-}
-
 function formatDigestDate() {
   return new Intl.DateTimeFormat('en-US', {
     timeZone: APP_TIMEZONE,
@@ -160,6 +149,30 @@ function formatDigestDate() {
 
 function pluralize(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function normalizeRelationshipTags(payload = {}) {
+  const value = payload.how_i_know_them ?? payload.tags;
+  return Array.isArray(value) ? value.join(',') : (value || '');
+}
+
+function normalizePreferredContactMethod(payload = {}) {
+  return payload.preferred_contact_method || 'Texting';
+}
+
+function normalizeCatchUpMethod(payload = {}) {
+  return payload.preferred_catch_up_method || payload.preferred_meeting_method || 'In-person';
+}
+
+function syncContactLastInteraction(contactId) {
+  const latestInteraction = db
+    .prepare('SELECT date FROM interactions WHERE contact_id = ? ORDER BY date DESC LIMIT 1')
+    .get(contactId);
+
+  db.prepare('UPDATE contacts SET last_contact_date = ? WHERE id = ?').run(
+    latestInteraction?.date || null,
+    contactId
+  );
 }
 
 function buildFallbackSummary(overdue, birthdays) {
@@ -183,7 +196,7 @@ function buildFallbackSummary(overdue, birthdays) {
     parts.push(
       overdue.length === 1
         ? `${overdueNames} is ready for a catch-up`
-        : `${overdueNames}${overdue.length > 2 ? ' and others are' : ' are'} due for a meal`
+        : `${overdueNames}${overdue.length > 2 ? ' and others are' : ' are'} due for a catch-up`
     );
   }
 
@@ -215,12 +228,10 @@ function buildContactCard(contact, options = {}) {
     detailLine = '',
   } = options;
 
-  const interactionDate = contact.lastInteraction?.date ? formatInteractionDate(contact.lastInteraction.date) : null;
-  const interactionNotes = contact.lastInteraction?.notes ? escapeHtml(contact.lastInteraction.notes) : null;
   const preferencePills = [
     contact.preferred_contact_method ? buildInfoPill('Reach out via', contact.preferred_contact_method) : '',
-    contact.preferred_meeting_method ? buildInfoPill('Best plan', contact.preferred_meeting_method) : '',
-    contact.tags ? buildInfoPill('Tags', contact.tags) : '',
+    contact.preferred_meeting_method ? buildInfoPill('Catch up via', contact.preferred_meeting_method) : '',
+    contact.tags ? buildInfoPill('How you know them', contact.tags) : '',
   ].join('');
 
   return `
@@ -230,15 +241,7 @@ function buildContactCard(contact, options = {}) {
           ${eyebrow ? `<div style="font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:${accentColor}; margin-bottom:8px;">${escapeHtml(eyebrow)}</div>` : ''}
           <div style="font-size:22px; line-height:28px; font-weight:700; color:#f8fafc; margin-bottom:8px;">${escapeHtml(formatContactName(contact))}</div>
           ${detailLine ? `<div style="font-size:15px; line-height:22px; color:#cbd5e1; margin-bottom:12px;">${detailLine}</div>` : ''}
-          ${preferencePills ? `<div style="margin-bottom:${interactionNotes || interactionDate ? '12px' : '0'};">${preferencePills}</div>` : ''}
-          ${
-            interactionNotes || interactionDate
-              ? `<div style="padding:14px; border-radius:14px; background:#0f172a; border:1px solid #334155; color:#cbd5e1;">
-                  <div style="font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#94a3b8; font-weight:700; margin-bottom:6px;">Last interaction${interactionDate ? ` • ${escapeHtml(interactionDate)}` : ''}</div>
-                  <div style="font-size:15px; line-height:22px; font-style:italic; color:#e2e8f0;">${interactionNotes || 'No notes saved for the latest interaction.'}</div>
-                </div>`
-              : `<div style="padding:14px; border-radius:14px; background:#0f172a; border:1px solid #334155; color:#94a3b8; font-size:14px; line-height:20px;">No previous interactions recorded yet.</div>`
-          }
+          ${preferencePills ? `<div>${preferencePills}</div>` : ''}
         </div>
       </td>
     </tr>
@@ -251,7 +254,7 @@ function buildDigestEmail({ overdue, birthdays, summaryText }) {
   const summaryCards = [
     { label: 'Total reminders', value: totalReminders, tone: '#c4b5fd', bg: '#312e81' },
     { label: 'Birthdays', value: birthdays.length, tone: '#f9a8d4', bg: '#4a1d3b' },
-    { label: 'Meals to plan', value: overdue.length, tone: '#fcd34d', bg: '#4a3114' },
+    { label: 'Catch-ups due', value: overdue.length, tone: '#fcd34d', bg: '#4a3114' },
   ];
 
   const birthdayCards = birthdays.map((contact) =>
@@ -277,7 +280,7 @@ function buildDigestEmail({ overdue, birthdays, summaryText }) {
           <div style="border-radius:20px; background:#162033; border:1px solid #334155; padding:22px; box-shadow:0 10px 24px rgba(2, 6, 23, 0.18);">
             <div style="font-size:20px; line-height:28px; font-weight:700; color:#f8fafc; margin-bottom:8px;">A quiet day is a good sign.</div>
             <div style="font-size:15px; line-height:24px; color:#cbd5e1;">
-              No birthdays and no overdue meals today. You’ve got space to be intentional instead of reactive.
+              No birthdays and no overdue catch-ups today. You’ve got space to be intentional instead of reactive.
             </div>
           </div>
         </td>
@@ -295,7 +298,7 @@ function buildDigestEmail({ overdue, birthdays, summaryText }) {
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px; background:#1e293b; border:1px solid #334155; border-radius:28px; overflow:hidden; box-shadow:0 20px 50px rgba(2, 6, 23, 0.32);">
                 <tr>
                   <td style="padding:32px 32px 24px 32px; background:linear-gradient(135deg, #1f2937 0%, #172033 50%, #111827 100%); border-bottom:1px solid #334155;">
-                    <div style="font-size:13px; line-height:18px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#94a3b8; margin-bottom:12px;">Meal Grabber Daily Digest</div>
+                    <div style="font-size:13px; line-height:18px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#94a3b8; margin-bottom:12px;">Let&apos;s Grab a Meal Daily Digest</div>
                     <div style="font-size:34px; line-height:40px; font-weight:800; color:#f8fafc; margin-bottom:10px;">Hi Ian, here’s your relationship pulse for ${escapeHtml(formatDigestDate())}.</div>
                     <div style="font-size:16px; line-height:26px; color:#cbd5e1; max-width:560px;">${escapeHtml(introSummary)}</div>
                   </td>
@@ -332,7 +335,7 @@ function buildDigestEmail({ overdue, birthdays, summaryText }) {
                     ? `<tr>
                         <td style="padding:8px 32px 8px 32px;">
                           <div style="font-size:24px; line-height:30px; font-weight:800; color:#f8fafc; margin-bottom:6px;">Catch-ups to plan</div>
-                          <div style="font-size:15px; line-height:24px; color:#cbd5e1; margin-bottom:16px;">${pluralize(overdue.length, 'meal')} could use a little momentum.</div>
+                          <div style="font-size:15px; line-height:24px; color:#cbd5e1; margin-bottom:16px;">${pluralize(overdue.length, 'catch-up')} could use a little momentum.</div>
                           <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${overdueCards}</table>
                         </td>
                       </tr>`
@@ -340,9 +343,18 @@ function buildDigestEmail({ overdue, birthdays, summaryText }) {
                 }
                 ${emptyState}
                 <tr>
+                  <td style="padding:16px 32px 8px 32px;">
+                    <div style="border-radius:20px; background:#0f172a; border:1px solid #334155; padding:20px;">
+                      <div style="font-size:18px; line-height:24px; font-weight:700; color:#f8fafc; margin-bottom:8px;">Want to log a catch-up or update a contact?</div>
+                      <div style="font-size:14px; line-height:22px; color:#cbd5e1; margin-bottom:16px;">Open the app to edit interactions, adjust contact details, or record a quick follow-up while it’s top of mind.</div>
+                      <a href="${escapeHtml(APP_URL)}" style="display:inline-block; padding:12px 18px; border-radius:999px; background:#4f46e5; color:#ffffff; font-size:14px; line-height:20px; font-weight:700; text-decoration:none;">Open Let&apos;s Grab a Meal</a>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
                   <td style="padding:16px 32px 32px 32px;">
                     <div style="padding-top:18px; border-top:1px solid #334155; font-size:13px; line-height:22px; color:#94a3b8;">
-                      Meal Grabber is meant to make staying in touch feel lighter, not heavier. Small consistency beats perfect planning.
+                      Let&apos;s Grab a Meal is meant to make staying in touch feel lighter, not heavier. Small consistency beats perfect planning.
                     </div>
                   </td>
                 </tr>
@@ -416,7 +428,7 @@ app.get('/api/contacts', (req, res) => {
 });
 
 app.post('/api/contacts', (req, res) => {
-  const { first_name, last_name, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method } = req.body;
+  const { first_name, last_name, birthday, frequency_days } = req.body;
   const info = db.prepare(`
     INSERT INTO contacts (first_name, last_name, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method) 
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -425,15 +437,15 @@ app.post('/api/contacts', (req, res) => {
     last_name || '', 
     birthday || null,
     frequency_days || 30, 
-    Array.isArray(tags) ? tags.join(',') : (tags || ''), 
-    preferred_contact_method || 'Texting', 
-    preferred_meeting_method || 'In-person'
+    normalizeRelationshipTags(req.body),
+    normalizePreferredContactMethod(req.body),
+    normalizeCatchUpMethod(req.body)
   );
   res.json({ id: info.lastInsertRowid });
 });
 
 app.put('/api/contacts/:id', (req, res) => {
-  const { first_name, last_name, birthday, frequency_days, tags, preferred_contact_method, preferred_meeting_method } = req.body;
+  const { first_name, last_name, birthday, frequency_days } = req.body;
   db.prepare(`
     UPDATE contacts SET 
       first_name = ?, 
@@ -449,9 +461,9 @@ app.put('/api/contacts/:id', (req, res) => {
     last_name || '', 
     birthday || null,
     frequency_days || 30, 
-    Array.isArray(tags) ? tags.join(',') : (tags || ''), 
-    preferred_contact_method || 'Texting', 
-    preferred_meeting_method || 'In-person',
+    normalizeRelationshipTags(req.body),
+    normalizePreferredContactMethod(req.body),
+    normalizeCatchUpMethod(req.body),
     req.params.id
   );
   res.status(200).send();
@@ -481,12 +493,47 @@ app.post('/api/interactions', (req, res) => {
   const { contact_id, type, date, notes } = req.body;
   
   const insertInteraction = db.transaction(() => {
-    db.prepare('INSERT INTO interactions (contact_id, type, date, notes) VALUES (?, ?, ?, ?)').run(contact_id, type, date, notes);
-    db.prepare('UPDATE contacts SET last_contact_date = ? WHERE id = ?').run(date, contact_id);
+    const info = db
+      .prepare('INSERT INTO interactions (contact_id, type, date, notes) VALUES (?, ?, ?, ?)')
+      .run(contact_id, type, date, notes || '');
+    syncContactLastInteraction(contact_id);
+    return info.lastInsertRowid;
   });
 
-  insertInteraction();
-  res.status(201).send();
+  const interactionId = insertInteraction();
+  res.status(201).json({ id: interactionId });
+});
+
+app.put('/api/interactions/:id', (req, res) => {
+  const { type, date, notes } = req.body;
+
+  const updateInteraction = db.transaction(() => {
+    const existing = db
+      .prepare('SELECT contact_id FROM interactions WHERE id = ?')
+      .get(req.params.id);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare('UPDATE interactions SET type = ?, date = ?, notes = ? WHERE id = ?').run(
+      type,
+      date,
+      notes || '',
+      req.params.id
+    );
+    syncContactLastInteraction(existing.contact_id);
+
+    return existing.contact_id;
+  });
+
+  const contactId = updateInteraction();
+
+  if (!contactId) {
+    return res.status(404).json({ error: 'Interaction not found' });
+  }
+
+  res.status(200).send();
 });
 
 // Notification Logic
@@ -516,7 +563,7 @@ async function generateAISummary(overdue, birthdays) {
   
   try {
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-    const prompt = `You are a helpful personal assistant for "Meal Grabber", an app that helps Ian stay in touch with friends.
+    const prompt = `You are a helpful personal assistant for "Let's Grab a Meal", an app that helps Ian stay in touch with friends.
     Based on the following data for today, write a short, warm, emotionally intelligent summary for an email intro (2-3 sentences max).
     Make it feel personal and encouraging, not robotic. If there are people to reach out to, mention one or two specifically.
     Avoid bullet points, avoid greetings/sign-offs, and avoid repeating raw dates or exact timestamps.
@@ -573,9 +620,9 @@ async function sendNotificationEmails() {
 
   try {
     const { data, error } = await resend.emails.send({
-      from: 'Meal Grabber <onboarding@resend.dev>',
+      from: "Let's Grab a Meal <onboarding@resend.dev>",
       to: [notificationEmail],
-      subject: `Meal Grabber: ${overdue.length + birthdays.length} Reminders for Today`,
+      subject: `Let's Grab a Meal: ${overdue.length + birthdays.length} Reminders for Today`,
       html: html,
     });
 

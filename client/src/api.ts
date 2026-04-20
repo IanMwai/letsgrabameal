@@ -33,6 +33,8 @@ export const updateContact = (id: number, contact: {
 export const deleteContact = (id: number) => api.delete(`/contacts/${id}`);
 export const logInteraction = (interaction: { contact_id: number; type: string; date: string; notes?: string }) => 
   api.post('/interactions', interaction);
+export const updateInteraction = (id: number, interaction: { type: string; date: string; notes?: string }) =>
+  api.put(`/interactions/${id}`, interaction);
 
 export const login = (password: string) => api.post('/login', { password });
 export const logout = () => api.post('/logout');

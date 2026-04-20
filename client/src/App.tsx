@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getContacts, logInteraction, addContact, deleteContact, getContactDetails, updateContact, login, logout, checkAuth } from './api';
+import { getContacts, logInteraction, addContact, deleteContact, getContactDetails, updateContact, updateInteraction, login, logout, checkAuth } from './api';
 
 interface Interaction {
   id: number;
@@ -159,10 +159,12 @@ const shortDateFormatter = new Intl.DateTimeFormat('en-US', {
   day: 'numeric',
 });
 
-const fullDateFormatter = new Intl.DateTimeFormat('en-US', {
+const fullDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
   year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
 });
 
 const parseAppDate = (value: string) => {
@@ -178,7 +180,30 @@ const parseAppDate = (value: string) => {
 
 const formatShortDate = (value: string) => shortDateFormatter.format(parseAppDate(value));
 
-const formatFullDate = (value: string) => fullDateFormatter.format(parseAppDate(value));
+const formatFullDateTime = (value: string) => fullDateTimeFormatter.format(parseAppDate(value));
+
+const formatDateTimeInputValue = (value: string) => {
+  const parsedDate = parseAppDate(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+
+  const year = parsedDate.getFullYear();
+  const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
+  const day = String(parsedDate.getDate()).padStart(2, '0');
+  const hours = String(parsedDate.getHours()).padStart(2, '0');
+  const minutes = String(parsedDate.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
+const getNowDateTimeInputValue = () => formatDateTimeInputValue(new Date().toISOString());
+
+const toIsoDateTime = (value: string) => {
+  const parsedDate = new Date(value);
+  return Number.isNaN(parsedDate.getTime()) ? new Date().toISOString() : parsedDate.toISOString();
+};
 
 const formatRelativeTime = (value: string) => {
   const diffMs = Date.now() - parseAppDate(value).getTime();
@@ -216,6 +241,14 @@ const getTodayLocalMonthDay = () => {
   return `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 };
 
+const splitTags = (value: string | null | undefined) =>
+  value
+    ? value
+        .split(',')
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+    : [];
+
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [loginPassword, setLoginPassword] = useState('');
@@ -234,13 +267,15 @@ const App: React.FC = () => {
   const [prefContact, setPrefContact] = useState('Texting');
   const [prefMeeting, setPrefMeeting] = useState('In-person');
   
-  const TAG_OPTIONS = ['Harvard', 'LinkedIn connection', 'Home', 'KU', 'Church', 'Conferences', 'Other'];
+  const TAG_OPTIONS = ['Family', 'Harvard', 'LinkedIn connection', 'Home', 'KU', 'Church', 'Conferences', 'Other'];
   const CONTACT_METHODS = ['Texting', 'Calling', 'Emailing', 'Message (WhatsApp/Telegram)', 'Other'];
-  const MEETING_METHODS = ['In-person', 'Video Call', 'Voice Call', 'Other'];
+  const CATCH_UP_METHODS = ['In-person', 'Texting', 'Video Call', 'Voice Call', 'Other'];
 
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [interactionNotes, setInteractionNotes] = useState('');
   const [interactionType, setInteractionType] = useState('Meeting');
+  const [interactionDateTime, setInteractionDateTime] = useState(getNowDateTimeInputValue());
+  const [editingInteractionId, setEditingInteractionId] = useState<number | null>(null);
   const [overdueCount, setOverdueCount] = useState(0);
   const [birthdayContacts, setBirthdayContacts] = useState<Contact[]>([]);
 
@@ -293,6 +328,11 @@ const App: React.FC = () => {
     setIsAuthenticated(false);
     setContacts([]);
     setLoginPassword('');
+    setSelectedContact(null);
+    setInteractionType('Meeting');
+    setInteractionNotes('');
+    setInteractionDateTime(getNowDateTimeInputValue());
+    setEditingInteractionId(null);
   };
 
   const resetForm = () => {
@@ -305,6 +345,13 @@ const App: React.FC = () => {
     setPrefMeeting('In-person');
     setIsEditing(false);
     setEditingId(null);
+  };
+
+  const resetInteractionForm = () => {
+    setInteractionType('Meeting');
+    setInteractionNotes('');
+    setInteractionDateTime(getNowDateTimeInputValue());
+    setEditingInteractionId(null);
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -336,7 +383,7 @@ const App: React.FC = () => {
     setLastName(contact.last_name || '');
     setBirthday(contact.birthday || '');
     setNewFreq(contact.frequency_days);
-    setSelectedTags(contact.tags ? contact.tags.split(',') : []);
+    setSelectedTags(splitTags(contact.tags));
     setPrefContact(contact.preferred_contact_method || 'Texting');
     setPrefMeeting(contact.preferred_meeting_method || 'In-person');
     setIsEditing(true);
@@ -371,20 +418,38 @@ const App: React.FC = () => {
   const loadContactDetails = async (id: number) => {
     const res = await getContactDetails(id);
     setSelectedContact(res.data);
+    resetInteractionForm();
   };
 
   const handleDetailedLog = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedContact) return;
-    await logInteraction({
-      contact_id: selectedContact.id,
+
+    const interactionPayload = {
       type: interactionType,
-      date: new Date().toISOString(),
-      notes: interactionNotes
-    });
-    setInteractionNotes('');
+      date: toIsoDateTime(interactionDateTime),
+      notes: interactionNotes,
+    };
+
+    if (editingInteractionId) {
+      await updateInteraction(editingInteractionId, interactionPayload);
+    } else {
+      await logInteraction({
+        contact_id: selectedContact.id,
+        ...interactionPayload,
+      });
+    }
+
+    resetInteractionForm();
     loadContactDetails(selectedContact.id);
     fetchContacts();
+  };
+
+  const handleInteractionEdit = (interaction: Interaction) => {
+    setInteractionType(interaction.type);
+    setInteractionNotes(interaction.notes || '');
+    setInteractionDateTime(formatDateTimeInputValue(interaction.date));
+    setEditingInteractionId(interaction.id);
   };
 
   const handleTagToggle = (tag: string) => {
@@ -486,7 +551,7 @@ const App: React.FC = () => {
                 <input type="date" className="w-full p-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none" value={birthday} onChange={(e) => setBirthday(e.target.value)} />
               </div>
               <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-semibold text-slate-700">Tags</label>
+                <label className="text-sm font-semibold text-slate-700">How I know them</label>
                 <div className="flex flex-wrap gap-2">
                   {TAG_OPTIONS.map(tag => (
                     <button key={tag} type="button" onClick={() => handleTagToggle(tag)} className={`px-4 py-2 rounded-full text-sm font-medium border transition-all ${selectedTags.includes(tag) ? 'bg-indigo-100 border-indigo-300 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{tag}</button>
@@ -500,9 +565,9 @@ const App: React.FC = () => {
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700">Preferred Meeting Method</label>
+                <label className="text-sm font-semibold text-slate-700">Preferred Catch-Up Method</label>
                 <select value={prefMeeting} onChange={(e) => setPrefMeeting(e.target.value)} className="w-full p-3 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
-                  {MEETING_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                  {CATCH_UP_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
               <div className="flex items-center gap-3 md:col-span-2 pt-2">
@@ -524,7 +589,7 @@ const App: React.FC = () => {
               <div className="flex-1">
                 <div className="flex items-center flex-wrap gap-2 mb-2">
                   <h3 className="text-2xl font-bold text-slate-800">{contact.first_name} {contact.last_name}</h3>
-                  {contact.tags && contact.tags.split(',').map(tag => (
+                  {splitTags(contact.tags).map(tag => (
                     <span key={tag} className="text-[10px] font-bold uppercase bg-indigo-50 text-indigo-500 px-2 py-0.5 rounded-full border border-indigo-100">{tag}</span>
                   ))}
                 </div>
@@ -532,7 +597,7 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-2 text-slate-500 text-sm"><Clock size={16} className="text-slate-400" /><span>Every {contact.frequency_days} days</span></div>
                   <div className="flex items-center gap-2 text-slate-500 text-sm"><CheckCircle size={16} className="text-slate-400" /><span>{contact.last_contact_date ? `${formatRelativeTime(contact.last_contact_date)} ago` : 'Never contacted'}</span></div>
                   <div className="flex items-center gap-2 text-slate-500 text-sm"><MessageSquare size={16} className="text-slate-400" /><span>Via: {contact.preferred_contact_method}</span></div>
-                  <div className="flex items-center gap-2 text-slate-500 text-sm"><MapPin size={16} className="text-slate-400" /><span>Meet: {contact.preferred_meeting_method}</span></div>
+                  <div className="flex items-center gap-2 text-slate-500 text-sm"><MapPin size={16} className="text-slate-400" /><span>Catch up: {contact.preferred_meeting_method}</span></div>
                   <div className="flex items-center gap-2 text-slate-500 text-sm"><Gift size={16} className="text-slate-400" /><span>{contact.birthday ? formatShortDate(contact.birthday) : 'No birthday'}</span></div>
                 </div>
               </div>
@@ -566,15 +631,25 @@ const App: React.FC = () => {
                   <h2 className="text-2xl font-black text-slate-900 leading-tight">{selectedContact.first_name} {selectedContact.last_name}</h2>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2 mt-4">
-                {selectedContact.tags && selectedContact.tags.split(',').map(tag => (
+              <div className="mt-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2">How I know them</p>
+                <div className="flex flex-wrap gap-2">
+                {splitTags(selectedContact.tags).map(tag => (
                   <span key={tag} className="flex items-center gap-1 text-[11px] font-bold bg-slate-50 text-slate-500 px-3 py-1 rounded-full border border-slate-100"><Tag size={10} />{tag}</span>
                 ))}
+                {splitTags(selectedContact.tags).length === 0 && (
+                  <span className="text-sm text-slate-400">No context added yet.</span>
+                )}
+                </div>
               </div>
               <div className="mt-6 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-slate-600">
                   <Phone size={16} className="text-slate-400" />
-                  <span>{selectedContact.preferred_contact_method}</span>
+                  <span>Reach out via {selectedContact.preferred_contact_method}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <MapPin size={16} className="text-slate-400" />
+                  <span>Catch up via {selectedContact.preferred_meeting_method}</span>
                 </div>
               </div>
             </div>
@@ -582,24 +657,31 @@ const App: React.FC = () => {
           </div>
 
           <form onSubmit={handleDetailedLog} className="mb-8 p-6 bg-slate-50 rounded-[1.5rem] border border-slate-100">
-            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><CheckCircle size={18} className="text-indigo-500" />Log Interaction</h3>
+            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><CheckCircle size={18} className="text-indigo-500" />{editingInteractionId ? 'Edit Interaction' : 'Log Interaction'}</h3>
             <select value={interactionType} onChange={(e) => setInteractionType(e.target.value)} className="w-full p-3 mb-3 border border-slate-200 rounded-xl bg-white outline-none font-medium">
               <option value="Meeting">Meeting</option><option value="Call">Call</option><option value="Message">Message</option><option value="Other">Other</option>
             </select>
+            <input type="datetime-local" value={interactionDateTime} onChange={(e) => setInteractionDateTime(e.target.value)} className="w-full p-3 mb-3 border border-slate-200 rounded-xl bg-white outline-none font-medium" />
             <textarea placeholder="What did you talk about?" value={interactionNotes} onChange={(e) => setInteractionNotes(e.target.value)} className="w-full p-4 border border-slate-200 rounded-xl bg-white mb-4 outline-none min-h-[100px]" />
-            <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg">Save Interaction</button>
+            <div className="flex gap-3">
+              <button type="submit" className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg">{editingInteractionId ? 'Update Interaction' : 'Save Interaction'}</button>
+              {editingInteractionId && (
+                <button type="button" onClick={resetInteractionForm} className="px-4 py-3 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 transition-all">Cancel</button>
+              )}
+            </div>
           </form>
 
           <div>
-            <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Clock size={18} className="text-indigo-500" />Recent History</h3>
+            <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Clock size={18} className="text-indigo-500" />Interaction History</h3>
             <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
               {selectedContact.interactions && selectedContact.interactions.length > 0 ? (
                 selectedContact.interactions.map(interaction => (
                   <div key={interaction.id} className="p-4 border border-slate-50 rounded-2xl bg-white shadow-sm">
                     <div className="flex justify-between items-center mb-3">
                       <span className="text-[11px] font-black uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{interaction.type}</span>
-                      <span className="text-[11px] font-bold text-slate-400">{formatFullDate(interaction.date)}</span>
+                      <button type="button" onClick={() => handleInteractionEdit(interaction)} className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 transition-all">Edit</button>
                     </div>
+                    <p className="text-[11px] font-bold text-slate-400 mb-2">{formatFullDateTime(interaction.date)}</p>
                     {interaction.notes && <p className="text-sm text-slate-600 leading-relaxed">{interaction.notes}</p>}
                   </div>
                 ))
