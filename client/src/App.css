@@ -2,7 +2,6 @@
   --meal-ink: #243044;
   --meal-muted: #748094;
   --meal-line: rgba(36, 48, 68, 0.11);
-  --meal-panel: rgba(255, 255, 255, 0.78);
   --meal-green: #5f8d75;
   --meal-amber: #d6a461;
   --meal-red: #d97872;
@@ -137,7 +136,7 @@ button {
   border-radius: 10px;
   padding: 10px 14px;
   color: var(--meal-ink);
-  background: rgba(255, 255, 255, 0.68);
+  background: #ffffff;
   font-size: 14px;
   font-weight: 800;
   line-height: 1.15;
@@ -160,7 +159,7 @@ button {
   min-height: 38px;
   padding: 9px 11px;
   color: #526074;
-  background: rgba(255, 255, 255, 0.58);
+  background: #ffffff;
   font-size: 13px;
 }
 
@@ -179,7 +178,7 @@ button {
   border: 1px solid var(--meal-line);
   border-radius: 10px;
   color: var(--meal-muted);
-  background: rgba(255, 255, 255, 0.62);
+  background: #ffffff;
 }
 
 .meal-alert {
@@ -189,7 +188,7 @@ button {
   padding: 12px 14px;
   border: 1px solid var(--meal-line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.68);
+  background: #f8fbfd;
   font-weight: 800;
 }
 
@@ -260,7 +259,7 @@ button {
   border-radius: 10px;
   padding: 11px 12px;
   color: var(--meal-ink);
-  background: rgba(255, 255, 255, 0.92);
+  background: #ffffff;
   outline: none;
 }
 
@@ -334,7 +333,7 @@ button {
   padding: 16px;
   border: 1px solid rgba(36, 48, 68, 0.1);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.92);
+  background: #f8fbfd;
   box-shadow: 0 8px 22px rgba(36, 48, 68, 0.08);
 }
 
@@ -376,7 +375,7 @@ button {
   border: 1px solid rgba(36, 48, 68, 0.09);
   border-radius: 8px;
   color: #526074;
-  background: rgba(255, 255, 255, 0.64);
+  background: #edf3f7;
   line-height: 1.5;
 }
 
@@ -406,7 +405,7 @@ button {
   border-radius: 999px;
   padding: 6px 11px;
   color: #526074;
-  background: rgba(255, 255, 255, 0.7);
+  background: #ffffff;
   font-size: 13px;
   font-weight: 800;
 }
@@ -448,7 +447,7 @@ button {
   border-radius: 12px;
   padding: 16px;
   color: var(--meal-muted);
-  background: rgba(255, 255, 255, 0.46);
+  background: #f8fbfd;
   text-align: center;
 }
 
@@ -546,7 +545,7 @@ button {
   padding: 14px;
   border: 1px solid rgba(36, 48, 68, 0.09);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.66);
+  background: #ffffff;
 }
 
 .meal-timeline-list {
@@ -563,7 +562,7 @@ button {
   padding: 14px;
   border: 1px solid rgba(36, 48, 68, 0.09);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.76);
+  background: #ffffff;
 }
 
 .meal-timeline-item::before {
@@ -597,19 +596,6 @@ button {
   background: #e4f1e8;
   font-size: 12px;
   font-weight: 900;
-}
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #d8ddd8;
-  border-radius: 10px;
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator {
