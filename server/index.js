@@ -1,37 +1,18 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const cookieParser = require('cookie-parser');
 const db = require('./database');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
-const { Resend } = require('resend');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const cron = require('node-cron');
 
-// Check for required environment variables on startup
-if (!process.env.APP_PASSWORD || !process.env.COOKIE_SECRET) {
-  console.error('FATAL ERROR: APP_PASSWORD or COOKIE_SECRET environment variables are not set.');
-  process.exit(1);
-}
-
-const resend = new Resend(process.env.RESEND_API_KEY || 'dummy_key');
-const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const APP_TIMEZONE = process.env.TIMEZONE || 'America/New_York';
-const APP_URL = process.env.APP_URL || 'https://letsgrabameal.fly.dev';
+const APP_URL = process.env.APP_URL || 'https://letsgrabameal.iantoyota.workers.dev';
 
 const app = express();
 const port = process.env.PORT || 3001;
+const host = process.env.HOST || '127.0.0.1';
 
-// Public health check for Fly.io (Safe: returns no data)
+// Public health check for local/dev process managers
 app.get('/health', (req, res) => res.status(200).send('OK'));
-
-const COOKIE_SECRET = process.env.COOKIE_SECRET;
-const APP_PASSWORD = process.env.APP_PASSWORD;
-
-if (!process.env.GEMINI_API_KEY) {
-  console.warn('Startup warning: GEMINI_API_KEY is not configured. Daily digest emails will be sent without an AI summary.');
-}
 
 const zonedDateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: APP_TIMEZONE,
@@ -107,10 +88,14 @@ function getContactsWithDaysSince() {
   return contacts
     .map((contact) => {
       const referenceDateKey = getZonedDateKey(contact.last_contact_date || contact.created_at);
+      const latestInteraction = db
+        .prepare('SELECT * FROM interactions WHERE contact_id = ? ORDER BY date DESC LIMIT 1')
+        .get(contact.id);
 
       return {
         ...contact,
         days_since_contact: diffCalendarDays(todayKey, referenceDateKey),
+        latestInteraction: latestInteraction || null,
       };
     })
     .sort(
@@ -175,187 +160,105 @@ function syncContactLastInteraction(contactId) {
   );
 }
 
-function buildFallbackSummary(overdue, birthdays) {
+function buildDigestSummary(overdue, birthdays) {
   if (overdue.length === 0 && birthdays.length === 0) {
-    return "You’re all caught up today. No overdue catch-ups and no birthdays on deck, so you can relax until the next check-in.";
+    return 'No birthdays or overdue catch-ups today.';
   }
 
   const parts = [];
+  if (birthdays.length > 0) parts.push(pluralize(birthdays.length, 'birthday', 'birthdays'));
+  if (overdue.length > 0) parts.push(pluralize(overdue.length, 'catch-up', 'catch-ups'));
+  return parts.join(' · ');
+}
 
-  if (birthdays.length > 0) {
-    const birthdayNames = birthdays.slice(0, 2).map((contact) => contact.first_name).join(' and ');
-    parts.push(
-      birthdays.length === 1
-        ? `${birthdayNames} has a birthday today`
-        : `${birthdayNames}${birthdays.length > 2 ? ' and others have' : ' have'} birthdays today`
-    );
+function buildDigestIntro(overdue, birthdays) {
+  if (overdue.length === 0 && birthdays.length === 0) {
+    return 'Hey Ian, you are up to date on check-ins today. Nothing needs your attention right now.';
   }
 
-  if (overdue.length > 0) {
-    const overdueNames = overdue.slice(0, 2).map((contact) => contact.first_name).join(' and ');
-    parts.push(
-      overdue.length === 1
-        ? `${overdueNames} is ready for a catch-up`
-        : `${overdueNames}${overdue.length > 2 ? ' and others are' : ' are'} due for a catch-up`
-    );
+  return 'Hi Ian, take a little time to check in with the people below. A quick note or small plan is enough.';
+}
+
+function buildLastTouch(contact) {
+  const notes = contact.lastInteraction?.notes?.trim();
+  if (notes) return notes;
+
+  if (contact.lastInteraction?.type) {
+    return `${contact.lastInteraction.type} logged without notes.`;
   }
 
-  return `${parts.join(', and ')}. A small nudge today could keep the momentum going.`;
+  return 'No interaction notes yet.';
 }
 
-function normalizeIntroSummary(summaryText) {
-  if (!summaryText) return null;
-
-  return summaryText
-    .trim()
-    .replace(/^hi ian[,!.\s-]*/i, '')
-    .replace(/^here'?s your relationship pulse for (today|[a-z]+,\s+[a-z]+\s+\d{1,2})[,!.\s-]*/i, '')
-    .trim();
-}
-
-function buildInfoPill(label, value) {
-  return `
-    <span style="display:inline-block; padding:6px 10px; margin:0 8px 8px 0; border-radius:999px; background:#273449; border:1px solid #334155; color:#cbd5e1; font-size:12px; line-height:16px;">
-      <strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}
-    </span>
-  `;
-}
-
-function buildContactCard(contact, options = {}) {
-  const {
-    accentColor = '#D97706',
-    eyebrow = '',
-    detailLine = '',
-  } = options;
-
-  const preferencePills = [
-    contact.preferred_contact_method ? buildInfoPill('Reach out via', contact.preferred_contact_method) : '',
-    contact.preferred_meeting_method ? buildInfoPill('Catch up via', contact.preferred_meeting_method) : '',
-    contact.tags ? buildInfoPill('How you know them', contact.tags) : '',
-  ].join('');
+function buildContactRow(contact, options = {}) {
+  const { label = '', detail = '' } = options;
 
   return `
     <tr>
-      <td style="padding:0 0 14px 0;">
-        <div style="border:1px solid #334155; border-radius:18px; background:#162033; padding:18px 18px 16px 18px; box-shadow:0 10px 24px rgba(2, 6, 23, 0.18);">
-          ${eyebrow ? `<div style="font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:${accentColor}; margin-bottom:8px;">${escapeHtml(eyebrow)}</div>` : ''}
-          <div style="font-size:22px; line-height:28px; font-weight:700; color:#f8fafc; margin-bottom:8px;">${escapeHtml(formatContactName(contact))}</div>
-          ${detailLine ? `<div style="font-size:15px; line-height:22px; color:#cbd5e1; margin-bottom:12px;">${detailLine}</div>` : ''}
-          ${preferencePills ? `<div>${preferencePills}</div>` : ''}
-        </div>
+      <td style="padding:16px 0; border-top:1px solid #e7e1d8;">
+        ${label ? `<div style="font-size:12px; line-height:18px; font-weight:800; color:#6f9f86; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">${escapeHtml(label)}</div>` : ''}
+        <div style="font-size:20px; line-height:26px; font-weight:800; color:#243044; margin-bottom:4px;">${escapeHtml(formatContactName(contact))}</div>
+        ${detail ? `<div style="font-size:14px; line-height:22px; color:#748094; margin-bottom:10px;">${detail}</div>` : ''}
+        <div style="font-size:13px; line-height:20px; font-weight:800; color:#748094; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:4px;">Last touch</div>
+        <div style="font-size:15px; line-height:24px; color:#526074;">${escapeHtml(buildLastTouch(contact))}</div>
       </td>
     </tr>
   `;
 }
 
-function buildDigestEmail({ overdue, birthdays, summaryText }) {
+function buildDigestEmail({ overdue, birthdays }) {
   const totalReminders = overdue.length + birthdays.length;
-  const introSummary = normalizeIntroSummary(summaryText) || buildFallbackSummary(overdue, birthdays);
-  const summaryCards = [
-    { label: 'Total reminders', value: totalReminders, tone: '#c4b5fd', bg: '#312e81' },
-    { label: 'Birthdays', value: birthdays.length, tone: '#f9a8d4', bg: '#4a1d3b' },
-    { label: 'Catch-ups due', value: overdue.length, tone: '#fcd34d', bg: '#4a3114' },
-  ];
-
-  const birthdayCards = birthdays.map((contact) =>
-    buildContactCard(contact, {
-      accentColor: '#DB2777',
-      eyebrow: 'Birthday today',
-      detailLine: 'A quick text, call, or plan could go a long way today.',
+  const headerPadding = totalReminders === 0 ? '28px 28px 18px 28px' : '28px 28px 10px 28px';
+  const ctaPadding = totalReminders === 0 ? '8px 28px 28px 28px' : '24px 28px 28px 28px';
+  const birthdayRows = birthdays.map((contact) =>
+    buildContactRow(contact, {
+      label: 'Birthday today',
+      detail: 'Today',
     })
   ).join('');
 
-  const overdueCards = overdue.map((contact) =>
-    buildContactCard(contact, {
-      accentColor: '#D97706',
-      eyebrow: contact.days_since_contact > contact.frequency_days ? 'Past due' : 'Due today',
-      detailLine: `Target cadence: every ${escapeHtml(contact.frequency_days)} days. It has been ${escapeHtml(Math.floor(contact.days_since_contact))} day${Math.floor(contact.days_since_contact) === 1 ? '' : 's'} since your last logged interaction.`,
+  const overdueRows = overdue.map((contact) =>
+    buildContactRow(contact, {
+      label: contact.days_since_contact > contact.frequency_days ? 'Past due' : 'Due today',
+      detail: `${Math.floor(contact.days_since_contact)} day${Math.floor(contact.days_since_contact) === 1 ? '' : 's'} since last interaction · every ${contact.frequency_days} days`,
     })
   ).join('');
-
-  const emptyState = overdue.length === 0 && birthdays.length === 0
-    ? `
-      <tr>
-        <td style="padding-top:8px;">
-          <div style="border-radius:20px; background:#162033; border:1px solid #334155; padding:22px; box-shadow:0 10px 24px rgba(2, 6, 23, 0.18);">
-            <div style="font-size:20px; line-height:28px; font-weight:700; color:#f8fafc; margin-bottom:8px;">A quiet day is a good sign.</div>
-            <div style="font-size:15px; line-height:24px; color:#cbd5e1;">
-              No birthdays and no overdue catch-ups today. You’ve got space to be intentional instead of reactive.
-            </div>
-          </div>
-        </td>
-      </tr>
-    `
-    : '';
 
   return `
-    <!DOCTYPE html>
+    <!doctype html>
     <html lang="en">
-      <body style="margin:0; padding:0; background:#0f172a; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#f8fafc;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f172a; padding:24px 12px;">
+      <body style="margin:0; padding:0; background:#f6f3ed; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color:#243044;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f3ed; padding:28px 12px;">
           <tr>
             <td align="center">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px; background:#1e293b; border:1px solid #334155; border-radius:28px; overflow:hidden; box-shadow:0 20px 50px rgba(2, 6, 23, 0.32);">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px; background:#fffcf7; border:1px solid #e7e1d8; border-radius:18px;">
                 <tr>
-                  <td style="padding:32px 32px 24px 32px; background:linear-gradient(135deg, #1f2937 0%, #172033 50%, #111827 100%); border-bottom:1px solid #334155;">
-                    <div style="font-size:13px; line-height:18px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#94a3b8; margin-bottom:12px;">Let&apos;s Grab a Meal Daily Digest</div>
-                    <div style="font-size:34px; line-height:40px; font-weight:800; color:#f8fafc; margin-bottom:10px;">Hi Ian, here’s your relationship pulse for ${escapeHtml(formatDigestDate())}.</div>
-                    <div style="font-size:16px; line-height:26px; color:#cbd5e1; max-width:560px;">${escapeHtml(introSummary)}</div>
+                  <td style="padding:${headerPadding};">
+                    <div style="font-size:13px; line-height:18px; font-weight:800; color:#748094; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:10px;">Let's Grab a Meal</div>
+                    <div style="font-size:30px; line-height:36px; font-weight:850; color:#243044; margin-bottom:8px;">Daily check-in</div>
+                    <div style="font-size:16px; line-height:25px; color:#526074; margin-bottom:12px;">${escapeHtml(buildDigestIntro(overdue, birthdays))}</div>
+                    <div style="font-size:14px; line-height:22px; color:#748094;">${escapeHtml(formatDigestDate())} · ${escapeHtml(buildDigestSummary(overdue, birthdays))}</div>
                   </td>
                 </tr>
+                ${birthdays.length > 0 ? `
+                  <tr>
+                    <td style="padding:26px 28px 0 28px;">
+                      <div style="font-size:18px; line-height:24px; font-weight:850; color:#243044;">Birthdays</div>
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${birthdayRows}</table>
+                    </td>
+                  </tr>
+                ` : ''}
+                ${overdue.length > 0 ? `
+                  <tr>
+                    <td style="padding:26px 28px 0 28px;">
+                      <div style="font-size:18px; line-height:24px; font-weight:850; color:#243044;">Catch-ups</div>
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${overdueRows}</table>
+                    </td>
+                  </tr>
+                ` : ''}
                 <tr>
-                  <td style="padding:24px 24px 8px 24px;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                      <tr>
-                        ${summaryCards.map((card) => `
-                          <td style="padding:0 8px 16px 8px; width:33.33%;">
-                            <div style="background:${card.bg}; border:1px solid rgba(255,255,255,0.06); border-radius:20px; padding:18px 16px; text-align:left;">
-                              <div style="font-size:13px; line-height:18px; color:${card.tone}; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px;">${escapeHtml(card.label)}</div>
-                              <div style="font-size:32px; line-height:36px; color:#f8fafc; font-weight:800;">${escapeHtml(card.value)}</div>
-                            </div>
-                          </td>
-                        `).join('')}
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-                ${
-                  birthdays.length > 0
-                    ? `<tr>
-                        <td style="padding:8px 32px 8px 32px;">
-                          <div style="font-size:24px; line-height:30px; font-weight:800; color:#f8fafc; margin-bottom:6px;">Birthdays today</div>
-                          <div style="font-size:15px; line-height:24px; color:#cbd5e1; margin-bottom:16px;">${pluralize(birthdays.length, 'person')} worth celebrating today.</div>
-                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${birthdayCards}</table>
-                        </td>
-                      </tr>`
-                    : ''
-                }
-                ${
-                  overdue.length > 0
-                    ? `<tr>
-                        <td style="padding:8px 32px 8px 32px;">
-                          <div style="font-size:24px; line-height:30px; font-weight:800; color:#f8fafc; margin-bottom:6px;">Catch-ups to plan</div>
-                          <div style="font-size:15px; line-height:24px; color:#cbd5e1; margin-bottom:16px;">${pluralize(overdue.length, 'catch-up')} could use a little momentum.</div>
-                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${overdueCards}</table>
-                        </td>
-                      </tr>`
-                    : ''
-                }
-                ${emptyState}
-                <tr>
-                  <td style="padding:16px 32px 8px 32px;">
-                    <div style="border-radius:20px; background:#0f172a; border:1px solid #334155; padding:20px;">
-                      <div style="font-size:18px; line-height:24px; font-weight:700; color:#f8fafc; margin-bottom:8px;">Want to log a catch-up or update a contact?</div>
-                      <div style="font-size:14px; line-height:22px; color:#cbd5e1; margin-bottom:16px;">Open the app to edit interactions, adjust contact details, or record a quick follow-up while it’s top of mind.</div>
-                      <a href="${escapeHtml(APP_URL)}" style="display:inline-block; padding:12px 18px; border-radius:999px; background:#4f46e5; color:#ffffff; font-size:14px; line-height:20px; font-weight:700; text-decoration:none;">Open Let&apos;s Grab a Meal</a>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding:16px 32px 32px 32px;">
-                    <div style="padding-top:18px; border-top:1px solid #334155; font-size:13px; line-height:22px; color:#94a3b8;">
-                      Let&apos;s Grab a Meal is meant to make staying in touch feel lighter, not heavier. Small consistency beats perfect planning.
-                    </div>
+                  <td style="padding:${ctaPadding};">
+                    <a href="${escapeHtml(APP_URL)}" style="display:inline-block; padding:11px 14px; border-radius:10px; background:#5f8d75; color:#ffffff; font-size:14px; line-height:20px; font-weight:800; text-decoration:none;">Open app</a>
                   </td>
                 </tr>
               </table>
@@ -367,58 +270,15 @@ function buildDigestEmail({ overdue, birthdays, summaryText }) {
   `;
 }
 
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? true : 'http://localhost:5173',
-  credentials: true
-}));
-app.use(express.json());
-app.use(cookieParser(COOKIE_SECRET));
-
-// Auth Middleware
-const authMiddleware = (req, res, next) => {
-  // Allow login route, health check, and public assets
-  if (req.path === '/api/login' || req.path === '/health' || req.path.startsWith('/assets/')) {
-    return next();
-  }
-
-  const authCookie = req.signedCookies.auth;
-  if (authCookie === 'true') {
-    return next();
-  }
-
-  // If it's an API request, return 401
-  if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  // Serve the frontend for all other requests
+if (process.env.NODE_ENV !== 'production') {
+  app.use(cors({
+    origin: 'http://localhost:5173',
+  }));
+}
+app.use(express.json({ limit: '16kb' }));
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
   next();
-};
-
-app.use(authMiddleware);
-
-// Login Endpoint
-app.post('/api/login', (req, res) => {
-  const { password } = req.body;
-  if (password === APP_PASSWORD) {
-    res.cookie('auth', 'true', { 
-      signed: true, 
-      httpOnly: true, 
-      maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
-    });
-    return res.json({ success: true });
-  }
-  res.status(401).json({ error: 'Invalid password' });
-});
-
-app.post('/api/logout', (req, res) => {
-  res.clearCookie('auth');
-  res.json({ success: true });
-});
-
-app.get('/api/auth-check', (req, res) => {
-  const authCookie = req.signedCookies.auth;
-  res.json({ authenticated: authCookie === 'true' });
 });
 
 // Contacts Endpoints
@@ -553,45 +413,10 @@ async function getNotificationData() {
   };
 }
 
-async function generateAISummary(overdue, birthdays) {
-  if (!genAI) {
-    return {
-      text: null,
-      error: 'GEMINI_API_KEY is not configured.',
-    };
-  }
-  
-  try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-    const prompt = `You are a helpful personal assistant for "Let's Grab a Meal", an app that helps Ian stay in touch with friends.
-    Based on the following data for today, write a short, warm, emotionally intelligent summary for an email intro (2-3 sentences max).
-    Make it feel personal and encouraging, not robotic. If there are people to reach out to, mention one or two specifically.
-    Avoid bullet points, avoid greetings/sign-offs, and avoid repeating raw dates or exact timestamps.
-    Do not start with "Hi Ian" and do not repeat the heading "here’s your relationship pulse".
-    
-    Data:
-    - Overdue contacts: ${overdue.map(c => `${c.first_name} ${c.last_name} (last met ${Math.floor(c.days_since_contact)} days ago, notes: ${c.lastInteraction?.notes || 'none'})`).join(', ')}
-    - Birthdays today: ${birthdays.map(c => `${c.first_name} ${c.last_name}`).join(', ')}
-    
-    The summary will appear under the heading "Hi Ian, here’s your relationship pulse for today."`;
-
-    const result = await model.generateContent(prompt);
-    return {
-      text: result.response.text(),
-      error: null,
-    };
-  } catch (err) {
-    console.error('CRON: Gemini AI error:', err);
-    return {
-      text: null,
-      error: err?.message || 'Unknown Gemini error.',
-    };
-  }
-}
-
 async function sendNotificationEmails() {
   const apiKey = process.env.RESEND_API_KEY;
   const notificationEmail = process.env.NOTIFICATION_EMAIL;
+  const emailFrom = process.env.EMAIL_FROM || "Let's Grab a Meal <onboarding@resend.dev>";
 
   if (!apiKey || apiKey === 'your_resend_api_key_here') {
     console.warn('CRON: Skipping email notification: RESEND_API_KEY is not configured.');
@@ -604,35 +429,35 @@ async function sendNotificationEmails() {
   }
 
   const { overdue, birthdays } = await getNotificationData();
-  const aiSummaryResult = await generateAISummary(overdue, birthdays);
-  const aiSummary = aiSummaryResult.text;
 
   console.log(`CRON: Found ${overdue.length} overdue contacts and ${birthdays.length} birthdays. Sending daily summary.`);
-  if (aiSummaryResult.error) {
-    console.warn(`CRON: AI summary unavailable: ${aiSummaryResult.error}`);
-  }
 
   const html = buildDigestEmail({
     overdue,
     birthdays,
-    summaryText: aiSummary,
   });
 
   try {
-    const { data, error } = await resend.emails.send({
-      from: "Let's Grab a Meal <onboarding@resend.dev>",
-      to: [notificationEmail],
-      subject: `Let's Grab a Meal: ${overdue.length + birthdays.length} Reminders for Today`,
-      html: html,
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: emailFrom,
+        to: [notificationEmail],
+        subject: `Let's Grab a Meal: ${overdue.length + birthdays.length} Reminders for Today`,
+        html,
+      }),
     });
+    const data = await response.json().catch(() => ({}));
 
-    if (error) {
-      console.error('CRON: Resend error:', error);
+    if (!response.ok) {
+      console.error('CRON: Resend error:', data);
       return {
         sent: false,
-        resendError: error,
-        aiSummaryIncluded: Boolean(aiSummary),
-        aiSummaryError: aiSummaryResult.error,
+        resendError: data,
         overdueCount: overdue.length,
         birthdayCount: birthdays.length,
       };
@@ -642,8 +467,6 @@ async function sendNotificationEmails() {
     return {
       sent: true,
       emailId: data.id,
-      aiSummaryIncluded: Boolean(aiSummary),
-      aiSummaryError: aiSummaryResult.error,
       overdueCount: overdue.length,
       birthdayCount: birthdays.length,
     };
@@ -652,27 +475,29 @@ async function sendNotificationEmails() {
     return {
       sent: false,
       sendError: err?.message || 'Unknown email send error.',
-      aiSummaryIncluded: Boolean(aiSummary),
-      aiSummaryError: aiSummaryResult.error,
       overdueCount: overdue.length,
       birthdayCount: birthdays.length,
     };
   }
 }
 
-cron.schedule('0 9 * * *', () => {
-  console.log('CRON: Running daily notification check...');
-  sendNotificationEmails();
-}, {
-  timezone: APP_TIMEZONE
-});
+app.post('/api/test-notify', async (req, res) => {
+  if (process.env.NODE_ENV === 'production' || process.env.ENABLE_TEST_NOTIFY !== 'true') {
+    return res.status(404).json({ error: 'Not found' });
+  }
 
-app.get('/api/test-notify', async (req, res) => {
   const result = await sendNotificationEmails();
   res.json({
     message: 'Notification check triggered.',
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
     ...result,
+  });
+});
+
+app.use('/api', (err, req, res, next) => {
+  console.error('Local API error:', err);
+  if (res.headersSent) return next(err);
+  return res.status(err?.type === 'entity.too.large' ? 413 : 400).json({
+    error: err?.type === 'entity.too.large' ? 'Request body is too large' : 'Invalid request',
   });
 });
 
@@ -682,6 +507,13 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Server running at http://0.0.0.0:${port}`);
+const server = app.listen(port, host, () => {
+  console.log(`Server running at http://${host}:${port}`);
 });
+
+server.on('error', (err) => {
+  console.error(`Server failed to listen on ${host}:${port}:`, err);
+  process.exit(1);
+});
+
+server.ref();

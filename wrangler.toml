@@ -1,0 +1,21 @@
+name = "letsgrabameal"
+main = "worker/index.mjs"
+compatibility_date = "2026-07-13"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./client/dist"
+not_found_handling = "single-page-application"
+
+[vars]
+TIMEZONE = "America/New_York"
+
+[triggers]
+# 13:00 UTC is 9 AM EDT, and 14:00 UTC is 9 AM EST. The worker
+# checks local time and records successful sends to avoid duplicates.
+crons = ["0 13 * * *", "0 14 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "letsgrabameal"
+database_id = "ede306d7-d7b7-4bc8-9b9a-b9c1d74629fa"

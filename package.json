@@ -11,6 +11,17 @@
     "build": "npm run build --workspace=client",
     "dev": "./start.sh",
     "preview": "NODE_ENV=production node server/index.js",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "cf:dev": "npm run build && npx wrangler dev --test-scheduled",
+    "cf:deploy": "npm run build && npx wrangler deploy",
+    "cf:migrate:local": "npx wrangler d1 migrations apply DB --local",
+    "cf:migrate:remote": "npx wrangler d1 migrations apply DB --remote",
+    "cf:import:remote": "npx wrangler d1 execute DB --remote --file=migrations/import-data.sql"
+  },
+  "dependencies": {
+    "jose": "^6.2.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.110.0"
   }
 }

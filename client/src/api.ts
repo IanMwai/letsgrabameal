@@ -2,10 +2,8 @@ import axios from 'axios';
 
 const API_URL = '/api';
 
-// Create an axios instance with withCredentials enabled
 const api = axios.create({
-  baseURL: API_URL,
-  withCredentials: true
+  baseURL: API_URL
 });
 
 export const getContacts = () => api.get('/contacts');
@@ -35,7 +33,3 @@ export const logInteraction = (interaction: { contact_id: number; type: string; 
   api.post('/interactions', interaction);
 export const updateInteraction = (id: number, interaction: { type: string; date: string; notes?: string }) =>
   api.put(`/interactions/${id}`, interaction);
-
-export const login = (password: string) => api.post('/login', { password });
-export const logout = () => api.post('/logout');
-export const checkAuth = () => api.get('/auth-check');

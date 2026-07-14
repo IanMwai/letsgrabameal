@@ -1,8 +1,10 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// Use DATABASE_URL if provided (for Fly.io persistence), otherwise default to local file
-const dbPath = process.env.DATABASE_URL || path.resolve(__dirname, 'database.db');
+// Use DATABASE_URL if provided, otherwise default to a local SQLite file
+const dbPath = process.env.DATABASE_URL
+  ? path.resolve(__dirname, process.env.DATABASE_URL)
+  : path.resolve(__dirname, 'database.db');
 const db = new Database(dbPath);
 
 db.exec(`

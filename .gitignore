@@ -23,6 +23,7 @@ server/database.db-journal
 *.sqlite
 *.sqlite3
 *.db
+migrations/import-data.sql
 
 # macOS specific
 .DS_Store
