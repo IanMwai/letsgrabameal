@@ -195,7 +195,7 @@ function buildContactRow(contact, options = {}) {
 
   return `
     <tr>
-      <td style="padding:16px 0; border-top:1px solid #e7e1d8;">
+      <td style="padding:16px 0; border-top:1px solid #d9e4eb;">
         ${label ? `<div style="font-size:12px; line-height:18px; font-weight:800; color:#6f9f86; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">${escapeHtml(label)}</div>` : ''}
         <div style="font-size:20px; line-height:26px; font-weight:800; color:#243044; margin-bottom:4px;">${escapeHtml(formatContactName(contact))}</div>
         ${detail ? `<div style="font-size:14px; line-height:22px; color:#748094; margin-bottom:10px;">${detail}</div>` : ''}
@@ -227,11 +227,11 @@ function buildDigestEmail({ overdue, birthdays }) {
   return `
     <!doctype html>
     <html lang="en">
-      <body style="margin:0; padding:0; background:#f6f3ed; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color:#243044;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f3ed; padding:28px 12px;">
+      <body style="margin:0; padding:0; background:#edf3f7; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color:#243044;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#edf3f7; padding:28px 12px;">
           <tr>
             <td align="center">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px; background:#fffcf7; border:1px solid #e7e1d8; border-radius:18px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px; background:#f8fbfd; border:1px solid #d9e4eb; border-radius:18px;">
                 <tr>
                   <td style="padding:${headerPadding};">
                     <div style="font-size:13px; line-height:18px; font-weight:800; color:#748094; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:10px;">Let's Grab a Meal</div>
